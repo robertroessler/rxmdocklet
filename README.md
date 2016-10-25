@@ -1,5 +1,7 @@
 # RXMDocklet
 
+[![Build status](https://ci.appveyor.com/api/projects/status/github/robertroessler/rxmdocklet?svg=true)](https://ci.appveyor.com/project/robertroessler/rxmdocklet)
+
 The RXMDocklet project grew out of an earlier work, "MBMDocklet", which only
 worked with the "Motherboard Monitor" app by Alex Van Kaam, popular from the
 late 90s through about 2004.
@@ -29,6 +31,8 @@ application framework - it is this last that causes the unfortunately large size
 of the DLL, since there has been a bit of "bloat" in MFC executables over the
 years, especially if one uses some of the expanded set of available controls.
 
+## Quickstart
+
 Usage of RXMDocklet is simple:
 
 *	copy the DLL (either a pre-built one from a RXMDocklet release, or one you
@@ -41,15 +45,15 @@ Usage of RXMDocklet is simple:
 	sensors and pages / display slots on the docklet, not to mention the ever-
 	popular choice of Celsius or Fahrenheit display of temperature data
 
-Supported Monitoring Apps
-=========================
-GPU-Z
-HWiNFO (1)
-MSI Afterburner
-SpeedFan
-CPUID HWMonitor (2)
+## Supported Monitoring Apps
 
-1) only in the pre-built RXMDocklet binary, see comments at end of More Details
+* GPU-Z
+* HWiNFO (1)
+* MSI Afterburner
+* SpeedFan
+* CPUID HWMonitor (2)
+
+1) only in the pre-built RXMDocklet binary, see comments at end of More Details  
 2) only versions 1.14-1.16, again, see comments at end of More Details
 
 Besides being "pure" C++, the code is believed to be both 32/64 -bit "safe", BUT
@@ -131,19 +135,19 @@ the accompanying DockletSDK.h in the "sdk" folder (the latter has NO changes).
 
 For those who prefer patches, here it is:
 
-188a189,192
-> static inline LPSTR  itoX(int i, LPSTR  sz, int r) { return _itoa(i, sz, r); }
-> 
-> static inline LPWSTR itoX(int i, LPWSTR sz, int r) { return _itow(i, sz, r); }
-> 
-193,196c197,198
-< 	char szNumber[100];
-< 	strcpy(szNumber, "");
-< 	itoa(iValue, szNumber, 10);
-< 	return WritePrivateProfileString(lpAppName, lpKeyName, szNumber, lpFileName);
----
-> 	TCHAR szNumber[24];
-> 	return WritePrivateProfileString(lpAppName, lpKeyName, itoX(iValue, szNumber, 10), lpFileName);
+    188a189,192
+    > static inline LPSTR  itoX(int i, LPSTR  sz, int r) { return _itoa(i, sz, r); }
+    > 
+    > static inline LPWSTR itoX(int i, LPWSTR sz, int r) { return _itow(i, sz, r); }
+    > 
+    193,196c197,198
+    < 	char szNumber[100];
+    < 	strcpy(szNumber, "");
+    < 	itoa(iValue, szNumber, 10);
+    < 	return WritePrivateProfileString(lpAppName, lpKeyName, szNumber, lpFileName);
+    ---
+    > 	TCHAR szNumber[24];
+    > 	return WritePrivateProfileString(lpAppName, lpKeyName, itoX(iValue, szNumber, 10), lpFileName);
 
 ## ToDo
 
