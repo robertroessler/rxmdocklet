@@ -31,6 +31,21 @@ application framework - it is this last that causes the unfortunately large size
 of the DLL, since there has been a bit of "bloat" in MFC executables over the
 years, especially if one uses some of the expanded set of available controls.
 
+Besides being "pure" C++, the code is believed to be both 32/64 -bit "safe", BUT
+as the only dock(s) it has been tried with are 32-bit apps, RXMDocklet has only
+received a workout in 32-bit form.
+
+## Supported Monitoring Apps
+
+* GPU-Z
+* HWiNFO (1)
+* MSI Afterburner
+* SpeedFan
+* CPUID HWMonitor (2)
+
+1) only in the pre-built RXMDocklet binary, see comments at end of More Details  
+2) only versions 1.14-1.16, again, see comments at end of More Details
+
 ## Quickstart
 
 Usage of RXMDocklet is simple:
@@ -44,21 +59,6 @@ Usage of RXMDocklet is simple:
 	image to display the settings on top of, saving the current mappings between
 	sensors and pages / display slots on the docklet, not to mention the ever-
 	popular choice of Celsius or Fahrenheit display of temperature data
-
-## Supported Monitoring Apps
-
-* GPU-Z
-* HWiNFO (1)
-* MSI Afterburner
-* SpeedFan
-* CPUID HWMonitor (2)
-
-1) only in the pre-built RXMDocklet binary, see comments at end of More Details  
-2) only versions 1.14-1.16, again, see comments at end of More Details
-
-Besides being "pure" C++, the code is believed to be both 32/64 -bit "safe", BUT
-as the only dock(s) it has been tried with are 32-bit apps, RXMDocklet has only
-received a workout in 32-bit form.
 
 ## More Details
 
