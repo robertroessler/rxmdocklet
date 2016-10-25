@@ -1,0 +1,16 @@
+/.vs/*
+*.obj
+*.exe
+*.lib
+*.map
+*.pdb
+*.idb
+*.ilk
+*.iobj
+*.ipdb
+*.log
+*.tlog
+*.lastbuildstate
+*.opendb
+*.sdf
+*.user

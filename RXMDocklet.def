@@ -1,0 +1,12 @@
+; RXMDocklet.def : Declares the module parameters for the DLL.
+
+LIBRARY "RXMDocklet"
+
+EXPORTS
+    OnCreate=OnCreateRXM
+    OnDestroy=OnDestroyRXM
+    OnGetInformation
+    OnLeftButtonClick
+    OnProcessMessage
+    OnRightButtonClick
+    OnSave=OnSaveRXM
