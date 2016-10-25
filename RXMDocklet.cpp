@@ -431,6 +431,123 @@ Unit GPUZMonitor::unitFromRecord(const SensorRecord& r) const
 }
 
 /*
+	Implementation of IMonitor for HWiNFO
+*/
+class HWiMonitor : public MonitorCommonImpl<DWORD>{
+#include "hwisenssm2.h"
+
+	typedef HWiNFO_SENSORS_SHARED_MEM2 HWiSharedMem;
+
+	int enumerateSensors() override;
+	HWiSharedMem& hwi() const { return *(HWiSharedMem*)mapping.Base(); }
+	HWiNFO_SENSORS_SENSOR_ELEMENT& sE(int i) const { return *(PHWiNFO_SENSORS_SENSOR_ELEMENT)(mapping.Base() + hwi().dwOffsetOfSensorSection + hwi().dwSizeOfSensorElement * i); }
+	HWiNFO_SENSORS_READING_ELEMENT& rE(int i) const { return *(PHWiNFO_SENSORS_READING_ELEMENT)(mapping.Base() + hwi().dwOffsetOfReadingSection + hwi().dwSizeOfReadingElement * i); }
+	Unit unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const;
+
+	DWORD origSensors = 0;
+	DWORD origReadings = 0;
+
+public:
+	HWiMonitor() {}
+	~HWiMonitor() override {}
+
+	bool Create(wstring root, wstring displayName) override {
+		this->root = root, this->displayName = displayName;
+		return mapping.Create(L"" HWiNFO_SENSORS_MAP_FILE_NAME2) && enumerateSensors() > 0;
+	}
+	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
+		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) {
+			// DEBUG code - this MAY detect underlying issue... or may not
+			if (hwi().dwNumSensorElements != origSensors || hwi().dwNumReadingElements != origReadings)
+				::OutputDebugString(L"RXMDocklet: *** CHANGE in # of sensors and/or readings! ***");
+			return rE(i).Value;
+		});
+	}
+	wstring SensorValueString(const wstring& path, bool fahrenheit = false) const override {
+		if (SensorUnit(path) == YorN)
+			return SensorValue(path) != 0 ? L"Yes" : L"No";
+		else
+			return MonitorCommonImpl::SensorValueString(path, fahrenheit);
+	}
+};
+
+int HWiMonitor::enumerateSensors()
+{
+	::OutputDebugString(L"HWiMonitor::enumerateSensors...");
+	// create a "sensorNameFromInstanceNumber"
+	auto computedSensorName = [](auto s) {
+		string raw_dev(s.szSensorNameUser);
+		wstring deviceName(raw_dev.begin(), raw_dev.end());
+		if (s.dwSensorInst > 0) {
+			wchar_t buf[8];
+			deviceName += L" #";
+			deviceName += _itow(s.dwSensorInst + 1, buf, 10);
+		}
+		return deviceName;
+	};
+	sensors.clear(), values.clear(), units.clear();
+	const auto& h = hwi();
+
+	if (h.dwSignature != 'SiWH')
+		return 0; // nothing to see here...
+
+	origSensors = h.dwNumSensorElements, origReadings = h.dwNumReadingElements;
+	for (DWORD i = 0; i < h.dwNumReadingElements; ++i) {
+		const auto& r = rE(i);
+		const auto u = unitFromReading(r);
+		if (u != None) {
+			const auto& s = sE(r.dwSensorIndex);
+			wstringstream pathSS;
+			pathSS << root << L'|' << computedSensorName(s);
+			pathSS << L'|' << r.szLabelUser;
+			if (r.szUnit[0])
+				pathSS << L' ' << r.szUnit;
+			wstring path(pathSS.str());
+			sensors.insert(path);
+			values[path] = i, units[path] = u;
+			::OutputDebugString(path.c_str());
+		}
+	}
+
+	return sensors.size();
+}
+
+Unit HWiMonitor::unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const
+{
+	switch (r.tReading) {
+	case SENSOR_TYPE_NONE:
+		return None;
+	case SENSOR_TYPE_TEMP:
+		return Degrees;
+	case SENSOR_TYPE_VOLT:
+		return Volts;
+	case SENSOR_TYPE_FAN:
+		return RPM;
+	case SENSOR_TYPE_CURRENT:
+		return Amps;
+	case SENSOR_TYPE_POWER:
+		return Watts;
+	case SENSOR_TYPE_CLOCK:
+		return MHz;
+	case SENSOR_TYPE_USAGE:
+		return UsagePerCent;
+	case SENSOR_TYPE_OTHER: {
+		// try to deduce our Unit from the "units" string in the READING...
+		// [UsagePerCent], MB, MBs, YorN, GTs, T, X, KBs
+		static const map<string, Unit> extendedTypes {
+			{"%", UsagePerCent},
+			{"MB", MB}, {"MB/s", MBs}, {"Yes/No", YorN}, {"GT/s", GTs},
+			{"T", T}, {"x", X}, {"KB/s", KBs}
+		};
+		const auto&& u = extendedTypes.find(r.szUnit);
+		return u != extendedTypes.end() ? u->second : Unknown; // we did our best
+	}
+	default:
+		return None; // "shouldn't happen"
+	}
+}
+
+/*
 	Implementation of IMonitor for CPUID HWMonitor
 
 	N.B. - ONLY good for versions 1.14 - 1.16 of HWMonitor - after that, they
@@ -1064,6 +1181,9 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 	auto gpuzm = make_unique<GPUZMonitor>();
 	if (gpuzm->Create(L"GPUZ", L"GPU-Z"))
 		rxm->monitor[L"GPUZ"] = move(gpuzm);
+	auto hwim = make_unique<HWiMonitor>();
+	if (hwim->Create(L"HWIM", L"HWiNFO"))
+		rxm->monitor[L"HWIM"] = move(hwim);
 	auto hwm = make_unique<HWMonitor>();
 	if (hwm->Create(L"HWM", L"HWMonitor"))
 		rxm->monitor[L"HWM"] = move(hwm);
@@ -1109,6 +1229,7 @@ void CALLBACK OnGetInformation(char *szName, char *szAuthor, int *iVersion, char
 	strcpy(szNotes,
 		"ObjectDock display docklet"
 		"for GPU-Z (www.techpowerup.com/gpuz/),\r\n"
+		"HWiNFO (www.hwinfo.com),\r\n"
 		"MSI Afterburner (gaming.msi.com/features/afterburner),\r\n"
 		"SpeedFan (www.almico.com/speedfan.php),\r\n"
 		"and CPUID HWMonitor (www.cpuid.com).\r\n"
