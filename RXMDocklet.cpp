@@ -456,12 +456,7 @@ public:
 		return mapping.Create(L"" HWiNFO_SENSORS_MAP_FILE_NAME2) && enumerateSensors() > 0;
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
-		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) {
-			// DEBUG code - this MAY detect underlying issue... or may not
-			if (hwi().dwNumSensorElements != origSensors || hwi().dwNumReadingElements != origReadings)
-				::OutputDebugString(L"RXMDocklet: *** CHANGE in # of sensors and/or readings! ***");
-			return rE(i).Value;
-		});
+		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) { return rE(i).Value; });
 	}
 	wstring SensorValueString(const wstring& path, bool fahrenheit = false) const override {
 		if (SensorUnit(path) == YorN)
