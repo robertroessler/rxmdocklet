@@ -28,6 +28,9 @@
 */
 
 #include "stdafx.h"
+#include <atomic>
+#include <mutex>
+#include <thread>
 #include <string>
 #include <sstream>
 #include <fstream>
@@ -66,6 +69,26 @@ using namespace std;
 */
 namespace rxm {
 
+/*
+	Implementation (and instance) of single global spinlock
+*/
+static class RSpinLock {
+public:
+	inline void lock() {
+		// try simple lock...
+		while (lock_.test_and_set(std::memory_order_acquire))
+			// ... nope, release time slice and keep trying
+			std::this_thread::yield();
+	}
+	inline void unlock() { lock_.clear(std::memory_order_release); }
+
+private:
+	std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
+} theSpin;
+
+/*
+	Implementation of Windows-style shared memory mapping
+*/
 class Mapping {
 	HANDLE mH = nullptr;				// mapped obj handle
 	LPBYTE vB = nullptr;				// mapped obj view base
@@ -195,6 +218,7 @@ protected:
 	template<class RawValueAccess>
 	float sensorValueImpl(const wstring& path, bool fahrenheit, RawValueAccess f) const {
 		float ret = 0;
+		lock_guard<RSpinLock> acquire(theSpin);
 		const auto&& v = values.find(path);
 		const auto&& u = units.find(path);
 		if (v == values.end() || u == units.end())
@@ -302,6 +326,7 @@ public:
 int ABMonitor::enumerateSensors()
 {
 	::OutputDebugString(L"ABMonitor::enumerateSensors...");
+	lock_guard<RSpinLock> acquire(theSpin);
 	sensors.clear(), values.clear(), units.clear();
 	const auto& a = ab();
 
@@ -395,6 +420,7 @@ public:
 int GPUZMonitor::enumerateSensors()
 {
 	::OutputDebugString(L"GPUZMonitor::enumerateSensors...");
+	lock_guard<RSpinLock> acquire(theSpin);
 	sensors.clear(), values.clear(), units.clear();
 	const auto& g = gpuz();
 
@@ -622,6 +648,7 @@ int HWMonitor::enumerateSensors()
 	};
 	::OutputDebugString(L"HWMonitor::enumerateSensors...");
 	multiset<wstring> devices;
+	lock_guard<RSpinLock> acquire(theSpin);
 	sensors.clear(), values.clear(), units.clear();
 
 	for (int d = 0; d < deviceCount(); ++d) {
@@ -727,6 +754,7 @@ public:
 int SFMonitor::enumerateSensors()
 {
 	::OutputDebugString(L"SFMonitor::enumerateSensors...");
+	lock_guard<RSpinLock> acquire(theSpin);
 	sensors.clear(), values.clear(), units.clear();
 	wstring sfPath = getExecutableDir(speedFanExecutable);
 	if (sfPath.empty())
