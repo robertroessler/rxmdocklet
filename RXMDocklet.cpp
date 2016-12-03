@@ -104,19 +104,22 @@ public:
 
 	bool Create(LPCWSTR sharedObjName)
 	{
+		if (vN != 0)
+			return true;	// (mapping ALREADY here)
+
 		mH = ::OpenFileMapping(GENERIC_READ, FALSE, sharedObjName);
 		if (mH == nullptr)
 			return false;	// we're outta here
 
 		vB = (LPBYTE)::MapViewOfFile(mH, FILE_MAP_READ, 0, 0, 0);
 		if (vB == nullptr) {
-			::CloseHandle(mH);
+			::CloseHandle(mH), mH = nullptr;
 			return false;	// we're outta here
 		}
 
 		MEMORY_BASIC_INFORMATION mbI;
 		if (::VirtualQuery(vB, &mbI, sizeof mbI) != sizeof mbI) {
-			::UnmapViewOfFile(vB), vB = nullptr, ::CloseHandle(mH);
+			::UnmapViewOfFile(vB), vB = nullptr, ::CloseHandle(mH), mH = nullptr;
 			return false;	// we're outta here
 		}
 
@@ -192,7 +195,6 @@ class IMonitor {
 public:
 	virtual ~IMonitor() {};
 
-	virtual bool Create(wstring root, wstring displayName) = 0;
 	virtual wstring DisplayName() const = 0;
 	virtual bool Refresh() = 0;
 	virtual const sensor_enumeration_t& Sensors() const = 0;
@@ -213,8 +215,9 @@ protected:
 	map<sensor_t, T> values;
 	map<sensor_t, Unit> units;
 
+	MonitorCommonImpl(wstring root, wstring displayName) : root(root), displayName(displayName) {}
+
 	constexpr double c2f(double d) const { return floor((d * 9 / 5 + 32) + 0.5); }
-	virtual int enumerateSensors() = 0;
 	template<class RawValueAccess>
 	float sensorValueImpl(const wstring& path, bool fahrenheit, RawValueAccess f) const {
 		float ret = 0;
@@ -237,9 +240,6 @@ protected:
 public:
 	constexpr wstring DisplayName() const override {
 		return displayName;
-	}
-	bool Refresh() override {
-		return enumerateSensors() > 0;
 	}
 	const sensor_enumeration_t& Sensors() const override {
 		return sensors;
@@ -304,18 +304,17 @@ class ABMonitor : public MonitorCommonImpl<const float*>{
 
 	typedef MAHM_SHARED_MEMORY_HEADER AbSharedMem;
 
-	int enumerateSensors() override;
+	int enumerateSensors();
 	AbSharedMem& ab() const { return *(AbSharedMem*)mapping.Base(); }
 	MAHM_SHARED_MEMORY_ENTRY& rE(int i) const { return *(MAHM_SHARED_MEMORY_ENTRY*)(mapping.Base() + ab().dwHeaderSize + ab().dwEntrySize * i); }
 	MAHM_SHARED_MEMORY_GPU_ENTRY& gE(int i) const { return *(MAHM_SHARED_MEMORY_GPU_ENTRY*)(mapping.Base() + ab().dwHeaderSize + ab().dwEntrySize * ab().dwNumEntries + ab().dwGpuEntrySize * i); }
 	Unit unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const;
 
 public:
-	ABMonitor() {}
+	ABMonitor(wstring root, wstring displayName) : MonitorCommonImpl(root, displayName) {}
 	~ABMonitor() override {}
 
-	bool Create(wstring root, wstring displayName) override {
-		this->root = root, this->displayName = displayName;
+	bool Refresh() override {
 		return mapping.Create(L"MAHMSharedMemory") && enumerateSensors() > 0;
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
@@ -400,16 +399,15 @@ class GPUZMonitor : public MonitorCommonImpl<const double*> {
 	};
 #pragma pack(pop)
 
-	int enumerateSensors() override;
+	int enumerateSensors();
 	GpuzSharedMem& gpuz() const { return *(GpuzSharedMem*)mapping.Base(); }
 	Unit unitFromRecord(const SensorRecord& r) const;
 
 public:
-	GPUZMonitor() {}
+	GPUZMonitor(wstring root, wstring displayName) : MonitorCommonImpl(root, displayName) {}
 	~GPUZMonitor() override {}
 
-	bool Create(wstring root, wstring displayName) override {
-		this->root = root, this->displayName = displayName;
+	bool Refresh() override {
 		return mapping.Create(L"GPUZShMem") && enumerateSensors() > 0;
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
@@ -606,7 +604,7 @@ class HWMonitor : public MonitorCommonImpl<const float*> {
 	const HWMDevice& device(int d) const { return ((HWMDevice*)(mapping.Base() + sizeof HWMHdr))[d]; }
 	int deviceCount() const { return mapping.Base() ? ((HWMHdr*)mapping.Base())->deviceNum : 0; }
 	const char* deviceDescription(int d) const { return (mapping.Base() && d < deviceCount()) ? device(d).description : "" ; }
-	int enumerateSensors() override;
+	int enumerateSensors();
 	const wchar_t* groupType(int g) const {
 		static wchar_t* sensorGroupTypes[MaxGroups] {
 			L"<voltages>",
@@ -625,11 +623,10 @@ class HWMonitor : public MonitorCommonImpl<const float*> {
 	Unit unitFromDGS(int d, int g, int s) const;
 
 public:
-	HWMonitor() {}
+	HWMonitor(wstring root, wstring displayName) : MonitorCommonImpl(root, displayName) {}
 	~HWMonitor() override {}
 
-	bool Create(wstring root, wstring displayName) override {
-		this->root = root, this->displayName = displayName;
+	bool Refresh() override {
 		return mapping.Create(L"$CPUID$HWM$") && enumerateSensors() > 0;
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
@@ -732,16 +729,15 @@ class SFMonitor : public MonitorCommonImpl<const int*> {
 	const wchar_t* cfgEndTag = L"xxx end";
 	const int cfgEndTagN = wcslen(cfgEndTag);
 
-	int enumerateSensors() override;
+	int enumerateSensors();
 	wstring SFMonitor::getExecutableDir(const wstring& exeToFind);
 	SfSharedMem& sf() const { return *(SfSharedMem*)mapping.Base(); }
 
 public:
-	SFMonitor() {}
+	SFMonitor(wstring root, wstring displayName) : MonitorCommonImpl(root, displayName) {}
 	~SFMonitor() override {}
 
-	bool Create(wstring root, wstring displayName) override {
-		this->root = root, this->displayName = displayName;
+	bool Refresh() override {
 		return mapping.Create(L"SFSharedMemory_ALM") && enumerateSensors() > 0;
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
@@ -929,22 +925,31 @@ struct RXM {
 		void Assign(const wstring& p, COLORREF c) { path = p, rgb = c; }
 		void Clear() { path.clear(), rgb = 0, last = -1; }
 		void Create(const wstring& f, StringAlignment a) { form = f, rgb = 0, last = -1, align = a; }
+		bool Live(RXM* rxm) const {
+			const auto m = rxm->monitor.find(head(path));
+			if (m == rxm->monitor.cend())
+				return false;
+			const auto& s = m->second.get()->Sensors();
+			return s.empty() ? false : s.find(path) != s.cend();
+		}
 		void Render(RXM* rxm, Graphics& g, Gdiplus::Font& f, RectF& r, StringFormat& sf) {
 			// display individual sensor with supplied GdiPlus formatting & attributes AS REQUIRED
 			if (Active()) {
-				auto m = rxm->FromPath(path);
-				last = m->SensorValue(path);
-				wstring t = form;
-				t.replace(t.find(L"%s"), 2, m->SensorValueString(path, rxm->fahrenheit == 1));
+				wstring t = form, valString{ L'-' };
+				if (Live(rxm)) {
+					auto m = rxm->FromPath(path);
+					last = m->SensorValue(path);
+					valString = m->SensorValueString(path, rxm->fahrenheit == 1);
+				}
+				t.replace(t.find(L"%s"), 2, valString);
 				sf.SetAlignment(align);
 				g.DrawString(t.c_str(), -1, &f, r, &sf, &SolidBrush(COLORREF2Color(rgb)));
 			}
 		}
-		bool UpdateRequired(RXM* rxm) const { return Active() && rxm->FromPath(path)->SensorValue(path) != last; }
+		bool UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
 	} layout[Pages][LayoutsPerPage];	// sensor layouts (all pages)
 
 	IMonitor* FromPath(wstring path) const { return monitor.find(head(path))->second.get(); }
-	bool Valid(wstring path) const { return monitor.find(head(path)) != monitor.end(); }
 };
 
 // RXMConfigure dialog interface
@@ -978,7 +983,7 @@ class RXMConfigure : public CDialogEx
 	void assignSensor(int sensor);
 	void assignColor(int sensor);
 	void initializeBackgroundList();
-	void initializeSensor(int sensor);
+	void initializeSensors();
 	void initializeSensorTree();
 	void locateSensor(int sensor);
 	void unassignSensor(int sensor);
@@ -1069,7 +1074,7 @@ static void loadProfile(RXM* rxm, const string& ini, const string& iniGroup)
 		for (int s = 0; s < LayoutsPerPage; ++s) {
 			wchar_t k1[16], k2[16], b[MAX_PATH];
 			swprintf(k1, 16, L"Sensor%d-%d", p + 1, s + 1);
-			if (::GetPrivateProfileString(iniGroupW.c_str(), k1, L"", b, MAX_PATH, iniW.c_str()) && rxm->Valid(b)) {
+			if (::GetPrivateProfileString(iniGroupW.c_str(), k1, L"", b, MAX_PATH, iniW.c_str())) {
 				swprintf(k2, 16, L"Color%d-%d", p + 1, s + 1);
 				rxm->layout[p][s].Assign(b, ::GetPrivateProfileInt(iniGroupW.c_str(), k2, 0, iniW.c_str()));
 			}
@@ -1197,22 +1202,15 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 	auto rxm = make_unique<RXM>();
 	initializeRXM(rxm.get(), hwndDocklet, hInstance);
 
-	// create the specialized Monitors
-	auto abm = make_unique<ABMonitor>();
-	if (abm->Create(L"ABM", L"AfterBurner"))
-		rxm->monitor[L"ABM"] = move(abm);
-	auto gpuzm = make_unique<GPUZMonitor>();
-	if (gpuzm->Create(L"GPUZ", L"GPU-Z"))
-		rxm->monitor[L"GPUZ"] = move(gpuzm);
-	auto hwim = make_unique<HWiMonitor>();
-	if (hwim->Create(L"HWIM", L"HWiNFO"))
-		rxm->monitor[L"HWIM"] = move(hwim);
-	auto hwm = make_unique<HWMonitor>();
-	if (hwm->Create(L"HWM", L"HWMonitor"))
-		rxm->monitor[L"HWM"] = move(hwm);
-	auto sfm = make_unique<SFMonitor>();
-	if (sfm->Create(L"SF", L"SpeedFan"))
-		rxm->monitor[L"SF"] = move(sfm);
+	// create the specialized Monitors...
+	rxm->monitor.emplace(L"ABM", make_unique<ABMonitor>(L"ABM", L"AfterBurner"));
+	rxm->monitor.emplace(L"GPUZ", make_unique<GPUZMonitor>(L"GPUZ", L"GPU-Z"));
+	rxm->monitor.emplace(L"HWIM", make_unique<HWiMonitor>(L"HWIM", L"HWiNFO"));
+	rxm->monitor.emplace(L"HWM", make_unique<HWMonitor>(L"HWM", L"HWMonitor"));
+	rxm->monitor.emplace(L"SF", make_unique<SFMonitor>(L"SF", L"SpeedFan"));
+	// ... and initialize the ones that are [initially] present
+	for (auto& m : rxm->monitor)
+		m.second->Refresh();
 
 	if (rxm->monitor.empty())
 		DockletSetLabel(hwndDocklet, "Start a Monitor application!");
@@ -1442,27 +1440,22 @@ void RXMConfigure::initializeBackgroundList()
 	cb->SetRedraw(TRUE);
 }
 
-void RXMConfigure::initializeSensor(int sensor)
+void RXMConfigure::initializeSensors()
 {
-	RXM::Layout& l = rxm->layout[rxm->page][sensor];
-	if (!l.Active()) {
-		((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(RGB(192, 192, 192));
-		((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(L"");
-		return;	// (nothing [much] to do)
+	for (auto& l : rxm->layout[rxm->page]) {
+		const auto sensor = distance(rxm->layout[rxm->page], &l);
+		if (l.Active()) {
+			// display this sensor's color...
+			((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(l.rgb);
+			// ... and [somewhat descriptive] name
+			wstring elidedPath = head(l.path) + L'\u2026' + tail(l.path);
+			((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(elidedPath.c_str());
+		} else {
+			// (nothing [much] to do)
+			((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(RGB(192, 192, 192));
+			((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(L"");
+		}
 	}
-
-	const sensor_enumeration_t& sensors = rxm->FromPath(l.path)->Sensors();
-	if (sensors.find(l.path) == sensors.end()) {
-		// ouch - sensor is no longer valid!
-		l.Clear();
-		return;	// we're outta here
-	}
-
-	// display this sensor's color...
-	((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(l.rgb);
-	// ... and [somewhat descriptive] name
-	wstring elidedPath = head(l.path) + L'\u2026' + tail(l.path);
-	((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(elidedPath.c_str());
 }
 
 void RXMConfigure::initializeSensorTree()
@@ -1472,7 +1465,9 @@ void RXMConfigure::initializeSensorTree()
 	// FOREACH specialized Monitor...
 	for (const auto& pair : rxm->monitor) {
 		const auto& sensors = pair.second.get()->Sensors();
-		const int n = split(*begin(sensors), pathSeparator).size();
+		if (sensors.empty())
+			continue;
+		const int n = split(*cbegin(sensors), pathSeparator).size();
 		vector<wstring> treeName(n, L"");
 		vector<HTREEITEM> treeHandle(n, nullptr);
 		// ... build the sensor tree from the [ordered] set of paths
@@ -1501,7 +1496,7 @@ void RXMConfigure::locateSensor(int sensor)
 {
 	// set this sensor's corresponding hardware tree location...
 	RXM::Layout& l = rxm->layout[rxm->page][sensor];
-	if (!l.Active())
+	if (!l.Active() || !l.Live(rxm))
 		return;	// we're outta here
 
 	// ... from the assigned sensor path (also set focus)
@@ -1605,8 +1600,7 @@ BOOL RXMConfigure::OnInitDialog()
 	SensorTab.SetCurSel(rxm->page);
 
 	// init Sensor, Temperature, and Background controls
-	for (int i = 0; i < LayoutsPerPage; ++i)
-		initializeSensor(i);
+	initializeSensors();
 	initializeBackgroundList();
 	CelsiusOrFahrenheit = rxm->fahrenheit;
 	Background.SetCurSel(rxm->image);
@@ -1626,8 +1620,7 @@ BOOL RXMConfigure::OnInitDialog()
 void RXMConfigure::OnTcnSelchangeSensorTab(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	rxm->page = SensorTab.GetCurSel();
-	for (int i = 0; i < LayoutsPerPage; ++i)
-		initializeSensor(i);
+	initializeSensors();
 	renderPage(rxm, true);
 	*pResult = 0;
 }
