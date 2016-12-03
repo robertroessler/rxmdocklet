@@ -462,7 +462,7 @@ class HWiMonitor : public MonitorCommonImpl<DWORD>{
 
 	typedef HWiNFO_SENSORS_SHARED_MEM2 HWiSharedMem;
 
-	int enumerateSensors() override;
+	int enumerateSensors();
 	HWiSharedMem& hwi() const { return *(HWiSharedMem*)mapping.Base(); }
 	HWiNFO_SENSORS_SENSOR_ELEMENT& sE(int i) const { return *(PHWiNFO_SENSORS_SENSOR_ELEMENT)(mapping.Base() + hwi().dwOffsetOfSensorSection + hwi().dwSizeOfSensorElement * i); }
 	HWiNFO_SENSORS_READING_ELEMENT& rE(int i) const { return *(PHWiNFO_SENSORS_READING_ELEMENT)(mapping.Base() + hwi().dwOffsetOfReadingSection + hwi().dwSizeOfReadingElement * i); }
@@ -472,11 +472,10 @@ class HWiMonitor : public MonitorCommonImpl<DWORD>{
 	DWORD origReadings = 0;
 
 public:
-	HWiMonitor() {}
+	HWiMonitor(wstring root, wstring displayName) : MonitorCommonImpl(root, displayName) {}
 	~HWiMonitor() override {}
 
-	bool Create(wstring root, wstring displayName) override {
-		this->root = root, this->displayName = displayName;
+	bool Refresh() override {
 		return mapping.Create(L"" HWiNFO_SENSORS_MAP_FILE_NAME2) && enumerateSensors() > 0;
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
