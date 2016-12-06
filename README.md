@@ -11,14 +11,14 @@ structures used so that potentially *any* hardware "monitor" type app (or apps)
 could be used as sources of data to display in the ObjectDock docklet.
 
 RXMDocklet is quite simple in its primary interface, displaying from 1 to 8
-selected readings (each in a selected color) from the available sources over
-a choice of backgrounds - but always on top of the docklet's icon in the dock.
+selected readings (each in a custom color) from the available sources over a
+choice of backgrounds - but always on top of the docklet's icon in the dock.
 
 The "Configuration" dialog presents an intuitive graphical display allowing
 both the setting of particular display "slots" from a tree representation of
 the available sources and sensors (the "<<" button), as well as queries to
 determine exactly which element in the sensor tree is the source of data for a
-particular display slot (the ">>" button).  To completely unassign any single
+particular display slot (the ">>" button).  To completely *unassign* any single
 display slot, just select the text of its path and delete it.
 
 Finally, since 8 display slots may not be adequate for your use cases, either in
@@ -57,8 +57,8 @@ Usage of RXMDocklet is simple:
 
 *	the only options you can select from include selecting the docklet backdrop
 	image to display the settings on top of, saving the current mappings between
-	sensors and pages / display slots on the docklet, not to mention the ever-
-	popular choice of Celsius or Fahrenheit display of temperature data
+	sensors and pages / display slots on the docklet, and the ever-popular choice
+	of Celsius or Fahrenheit display of temperature data
 
 ## More Details
 
@@ -66,9 +66,9 @@ Remember that RXMDocklet is dependent on the use of monitoring apps to do the
 actual collection/generation of data values to be displayed by RXMDocklet... so
 do make sure to actually have one or more of these running *before* you start
 your chosen dock, as that is when RXMDocklet is in turn started, and looks to
-see which of these primary monitoring apps are available.  A corollary to this
-is that if a new monitoring app is started, the dock will need be restarted for
-RXMDocklet to be able to display anything from that [new] monitoring app.
+see which of these primary monitoring apps are available.  If you *do* wish to
+start one or more additional monitoring apps *after* RXMDocklet is running, no
+problem - just select Refresh from the docklet context menu.
 
 When performing any "configuration" of the monitoring apps, it is suggested
 that you instruct them to display any temperature info as "Celsius"... this is
@@ -119,7 +119,7 @@ older versions of CPUID HWMonitor.
 
 In addition to the enormous amount of work from all of the authors of the system
 monitoring tools themselves, RXMDocklet builds on the foundation contributed by
-Stardock - ObjectDock itself, which has made the "docklet" ecosystem possible.
+Stardock: ObjectDock itself, which has made the "docklet" ecosystem possible.
 
 For those wishing to develop docklets - or just understand their structure and
 operation - Stardock makes available the "ObjectDock Docklet SDK v1.0", from
