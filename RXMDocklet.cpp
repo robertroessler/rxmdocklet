@@ -70,9 +70,9 @@ using namespace std;
 namespace rxm {
 
 /*
-	Implementation (and instance) of single global spinlock
+	Definition and implementation of simple [threading-aware] spinlock
 */
-static class RSpinLock {
+class RSpinLock {
 public:
 	inline void lock() {
 		// try simple lock...
@@ -84,7 +84,7 @@ public:
 
 private:
 	std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
-} theSpin;
+};
 
 /*
 	Implementation of Windows-style shared memory mapping
@@ -214,14 +214,20 @@ protected:
 	sensor_enumeration_t sensors;
 	map<sensor_t, T> values;
 	map<sensor_t, Unit> units;
+	RSpinLock lock;
 
 	MonitorCommonImpl(wstring root, wstring displayName) : root(root), displayName(displayName) {}
 
 	constexpr double c2f(double d) const { return floor((d * 9 / 5 + 32) + 0.5); }
+	template<class SynchronizedInit>
+	bool refreshImpl(SynchronizedInit f) {
+		lock_guard<RSpinLock> acquire(lock);
+		return f();
+	}
 	template<class RawValueAccess>
 	float sensorValueImpl(const wstring& path, bool fahrenheit, RawValueAccess f) const {
 		float ret = 0;
-		lock_guard<RSpinLock> acquire(theSpin);
+		lock_guard<RSpinLock> acquire(const_cast<RSpinLock&>(lock));
 		const auto&& v = values.find(path);
 		const auto&& u = units.find(path);
 		if (v == values.end() || u == units.end())
@@ -315,7 +321,7 @@ public:
 	~ABMonitor() override {}
 
 	bool Refresh() override {
-		return mapping.Create(L"MAHMSharedMemory") && enumerateSensors() > 0;
+		return refreshImpl([this]() { return mapping.Create(L"MAHMSharedMemory") && enumerateSensors() > 0; });
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
@@ -325,7 +331,6 @@ public:
 int ABMonitor::enumerateSensors()
 {
 	::OutputDebugString(L"ABMonitor::enumerateSensors...");
-	lock_guard<RSpinLock> acquire(theSpin);
 	sensors.clear(), values.clear(), units.clear();
 	const auto& a = ab();
 
@@ -408,7 +413,7 @@ public:
 	~GPUZMonitor() override {}
 
 	bool Refresh() override {
-		return mapping.Create(L"GPUZShMem") && enumerateSensors() > 0;
+		return refreshImpl([this]() { return mapping.Create(L"GPUZShMem") && enumerateSensors() > 0; });
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
@@ -418,7 +423,6 @@ public:
 int GPUZMonitor::enumerateSensors()
 {
 	::OutputDebugString(L"GPUZMonitor::enumerateSensors...");
-	lock_guard<RSpinLock> acquire(theSpin);
 	sensors.clear(), values.clear(), units.clear();
 	const auto& g = gpuz();
 
@@ -515,7 +519,7 @@ public:
 	~HWMonitor() override {}
 
 	bool Refresh() override {
-		return mapping.Create(L"$CPUID$HWM$") && enumerateSensors() > 0;
+		return refreshImpl([this]() { return mapping.Create(L"$CPUID$HWM$") && enumerateSensors() > 0; });
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
@@ -533,7 +537,6 @@ int HWMonitor::enumerateSensors()
 	};
 	::OutputDebugString(L"HWMonitor::enumerateSensors...");
 	multiset<wstring> devices;
-	lock_guard<RSpinLock> acquire(theSpin);
 	sensors.clear(), values.clear(), units.clear();
 
 	for (int d = 0; d < deviceCount(); ++d) {
@@ -626,7 +629,7 @@ public:
 	~SFMonitor() override {}
 
 	bool Refresh() override {
-		return mapping.Create(L"SFSharedMemory_ALM") && enumerateSensors() > 0;
+		return refreshImpl([this]() { return mapping.Create(L"SFSharedMemory_ALM") && enumerateSensors() > 0; });
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) {
@@ -638,7 +641,6 @@ public:
 int SFMonitor::enumerateSensors()
 {
 	::OutputDebugString(L"SFMonitor::enumerateSensors...");
-	lock_guard<RSpinLock> acquire(theSpin);
 	sensors.clear(), values.clear(), units.clear();
 	wstring sfPath = getExecutableDir(speedFanExecutable);
 	if (sfPath.empty())
