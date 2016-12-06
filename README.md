@@ -43,7 +43,7 @@ received a workout in 32-bit form.
 * SpeedFan
 * CPUID HWMonitor (2)
 
-1) only in the pre-built RXMDocklet binary, see comments at end of More Details  
+1) only in the pre-built RXMDocklet binary, see comments at end of More Details
 2) only versions 1.14-1.16, again, see comments at end of More Details
 
 ## Quickstart
@@ -55,10 +55,15 @@ Usage of RXMDocklet is simple:
 	chosen dock installation (an appropriately named subfolder under this also
 	works), and click on your dock's "Add Item" menu entry - that's it!
 
-*	the only options you can select from include selecting the docklet backdrop
-	image to display the settings on top of, saving the current mappings between
-	sensors and pages / display slots on the docklet, and the ever-popular choice
-	of Celsius or Fahrenheit display of temperature data
+*	left-click *on the docklet itself* will cycle through any pages that have
+	sensor values defined, while right-click will provide access to the Refresh
+	and Configuration functionality
+ 
+*	besides establishing the sensor mappings themselves, the available options
+	include selecting the docklet backdrop image to display the values over,
+	saving the current mappings between sensors and pages / display slots on the
+	docklet, and the ever-popular choice of Celsius or Fahrenheit display of
+	temperature data
 
 ## More Details
 
