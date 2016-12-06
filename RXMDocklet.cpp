@@ -480,7 +480,7 @@ public:
 	~HWiMonitor() override {}
 
 	bool Refresh() override {
-		return mapping.Create(L"" HWiNFO_SENSORS_MAP_FILE_NAME2) && enumerateSensors() > 0;
+		return refreshImpl([this]() { return mapping.Create(L"" HWiNFO_SENSORS_MAP_FILE_NAME2) && enumerateSensors() > 0; });
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) { return rE(i).Value; });
