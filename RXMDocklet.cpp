@@ -184,7 +184,7 @@ static wstring tail(const wstring& path)
 
 static vector<wstring> split(const wstring& text, const wregex& sep)
 {
-	wsregex_token_iterator first(text.begin(), text.end(), sep, -1), last;
+	wsregex_token_iterator first(cbegin(text), cend(text), sep, -1), last;
 	return { first, last };
 }
 
@@ -230,7 +230,7 @@ protected:
 		lock_guard<RSpinLock> acquire(const_cast<RSpinLock&>(lock));
 		const auto&& v = values.find(path);
 		const auto&& u = units.find(path);
-		if (v == values.end() || u == units.end())
+		if (v == cend(values) || u == cend(units))
 			ret = numeric_limits<float>::infinity();	// sensor not present
 		else try {
 			double d = f(v->second, u->second);
@@ -252,7 +252,7 @@ public:
 	}
 	Unit SensorUnit(const wstring& path) const override {
 		const auto&& u = units.find(path);
-		return (u != units.end()) ? u->second : None;
+		return (u != cend(units)) ? u->second : None;
 	}
 	wstring SensorValueString(const wstring& path, bool fahrenheit) const override {
 		wchar_t b[16];
@@ -373,7 +373,7 @@ Unit ABMonitor::unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const
 		{ "%", UsagePerCent }, { "MB", MB }, { "FPS", FPS }, { "ms", MS }
 	};
 	const auto&& u = types.find(r.szSrcUnits);
-	return u != types.end() ? u->second : Unknown;
+	return u != cend(types) ? u->second : Unknown;
 }
 
 /*
@@ -429,7 +429,7 @@ int GPUZMonitor::enumerateSensors()
 	const auto&& device = find_if(cbegin(g.data), cend(g.data), [](const Record& r) {
 		return wcscmp(r.key, L"CardName") == 0;
 	});
-	wstring deviceName = (device != end(g.data)) ? device->val : L"<Graphics Card>";
+	wstring deviceName = (device != cend(g.data)) ? device->val : L"<Graphics Card>";
 
 	for (const auto& s : g.sensors) {
 		if (s.name[0] == L'\0')
@@ -455,7 +455,7 @@ Unit GPUZMonitor::unitFromRecord(const SensorRecord& r) const
 		{L"%", UsagePerCent}, {L"%%", UsagePerCent}
 	};
 	const auto&& u = types.find(r.unit);
-	return u != end(types) ? u->second : None;
+	return u != cend(types) ? u->second : None;
 }
 
 /*
@@ -541,7 +541,7 @@ int HWMonitor::enumerateSensors()
 
 	for (int d = 0; d < deviceCount(); ++d) {
 		string raw_dev(deviceDescription(d));
-		wstring deviceName(raw_dev.begin(), raw_dev.end());
+		wstring deviceName(cbegin(raw_dev), cend(raw_dev));
 		devices.insert(deviceName);
 		auto dupes = devices.count(deviceName);
 		for (int g = 0; g < MaxGroups; ++g)
@@ -711,7 +711,7 @@ int SFMonitor::enumerateSensors()
 				path = root + L'|', path += devices[longName], path += L"|<voltages>|";
 				path += line + cfgSensorNameTagN;
 				// UGLY HACK to deal with SpeedFan [config?] problem
-				if (sensors.find(path) == end(sensors)) {
+				if (sensors.find(path) == cend(sensors)) {
 					values[path] = &sf().volts[volts++], units[path] = Volts;
 					sensors.insert(path);
 					::OutputDebugString(path.c_str());
@@ -748,7 +748,7 @@ wstring SFMonitor::getExecutableDir(const wstring& exeToFind)
 	PROCESSENTRY32 pe { sizeof PROCESSENTRY32 };
 	for (BOOL status = ::Process32First(sH, &pe); status; status = ::Process32Next(sH, &pe)) {
 		wstring exe = pe.szExeFile;
-		transform(exe.begin(), exe.end(), exe.begin(), ::tolower);
+		transform(cbegin(exe), cend(exe), begin(exe), ::tolower);
 		if (exe.find(exeToFind) != wstring::npos) {
 			wchar_t fullExe[MAX_PATH];
 			DWORD nchars = MAX_PATH;
@@ -817,10 +817,10 @@ struct RXM {
 		void Create(const wstring& f, StringAlignment a) { form = f, rgb = 0, last = -1, align = a; }
 		bool Live(RXM* rxm) const {
 			const auto m = rxm->monitor.find(head(path));
-			if (m == rxm->monitor.cend())
+			if (m == cend(rxm->monitor))
 				return false;
 			const auto& s = m->second.get()->Sensors();
-			return s.empty() ? false : s.find(path) != s.cend();
+			return s.empty() ? false : s.find(path) != cend(s);
 		}
 		void Render(RXM* rxm, Graphics& g, Gdiplus::Font& f, RectF& r, StringFormat& sf) {
 			// display individual sensor with supplied GdiPlus formatting & attributes AS REQUIRED
@@ -958,7 +958,7 @@ static void initializeRXM(RXM* rxm, HWND hwndDocklet, HINSTANCE hInstance)
 
 static void loadProfile(RXM* rxm, const string& ini, const string& iniGroup)
 {
-	wstring iniW(ini.begin(), ini.end()), iniGroupW(iniGroup.begin(), iniGroup.end());
+	wstring iniW(cbegin(ini), cend(ini)), iniGroupW(cbegin(iniGroup), cend(iniGroup));
 	// slurp in sensor, color, and temperature settings
 	for (int p = 0; p < Pages; ++p)
 		for (int s = 0; s < LayoutsPerPage; ++s) {
@@ -978,7 +978,7 @@ static void loadProfile(RXM* rxm, const string& ini, const string& iniGroup)
 
 static bool pageIsActive(RXM* rxm)
 {
-	return any_of(begin(rxm->layout[rxm->page]), end(rxm->layout[rxm->page]), [](auto l) {
+	return any_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [](auto l) {
 		return l.Active();
 	});
 }
@@ -1039,7 +1039,7 @@ static void renderBackground(RXM* rxm)
 static void renderPage(RXM* rxm, bool force = false)
 {
 	// display all sensors on current page AS REQUIRED
-	if (force || any_of(begin(rxm->layout[rxm->page]), end(rxm->layout[rxm->page]), [rxm](const RXM::Layout& l) {
+	if (force || any_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [rxm](const RXM::Layout& l) {
 		return l.UpdateRequired(rxm);
 		})) {
 		// yup, update *is* required
@@ -1061,7 +1061,7 @@ static void renderPage(RXM* rxm, bool force = false)
 
 static void saveProfile(RXM* rxm, const string& ini, const string& iniGroup, bool asDefault = false)
 {
-	wstring iniW(ini.begin(), ini.end()), iniGroupW(iniGroup.begin(), iniGroup.end());
+	wstring iniW(cbegin(ini), cend(ini)), iniGroupW(cbegin(iniGroup), cend(iniGroup));
 	// handle "save local defaults" AS REQUIRED
 	if (asDefault)
 		WritePrivateProfileInt(iniGroupW.c_str(), L"ForceDockletDefaults", 1, iniW.c_str());
@@ -1368,7 +1368,7 @@ void RXMConfigure::initializeSensorTree()
 						treeName[0] = path[0];
 					else
 						treeHandle[i] = SensorTree.InsertItem(path[i].c_str(), treeHandle[i - 1]),
-						treeName[i] = path[i], fill(treeName.begin() + i + 1, treeName.end(), L"");
+						treeName[i] = path[i], fill(begin(treeName) + i + 1, end(treeName), L"");
 
 			// set up path <-> tree LEAF mappings
 			const auto h = treeHandle[n - 1];
@@ -1497,9 +1497,9 @@ BOOL RXMConfigure::OnInitDialog()
 
 	// "locate" 1st in-use sensor in tree
 	BOOL ret = TRUE;
-	const auto l = find_if(begin(rxm->layout[0]), end(rxm->layout[0]), [](auto l) { return l.Active(); });
-	if (l != end(rxm->layout[0]))
-		locateSensor(l - begin(rxm->layout[0])), ret = FALSE;
+	const auto l = find_if(cbegin(rxm->layout[0]), cend(rxm->layout[0]), [](auto l) { return l.Active(); });
+	if (l != cend(rxm->layout[0]))
+		locateSensor(l - cbegin(rxm->layout[0])), ret = FALSE;
 
 	return ret;  // return TRUE unless you set the focus to a control
 	// EXCEPTION: OCX Property Pages should return FALSE
