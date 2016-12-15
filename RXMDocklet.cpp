@@ -499,7 +499,7 @@ int HWiMonitor::enumerateSensors()
 	// create a "sensorNameFromInstanceNumber"
 	auto computedSensorName = [](auto s) {
 		string raw_dev(s.szSensorNameUser);
-		wstring deviceName(raw_dev.begin(), raw_dev.end());
+		wstring deviceName(cbegin(raw_dev), cend(raw_dev));
 		if (s.dwSensorInst > 0) {
 			wchar_t buf[8];
 			deviceName += L" #";
@@ -562,7 +562,7 @@ Unit HWiMonitor::unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const
 			{"T", T}, {"x", X}, {"KB/s", KBs}
 		};
 		const auto&& u = extendedTypes.find(r.szUnit);
-		return u != extendedTypes.end() ? u->second : Unknown; // we did our best
+		return u != cend(extendedTypes) ? u->second : Unknown; // we did our best
 	}
 	default:
 		return None; // "shouldn't happen"
