@@ -197,6 +197,7 @@ public:
 
 	virtual wstring DisplayName() const = 0;
 	virtual bool Refresh() = 0;
+	virtual bool RefreshNeeded() const = 0;
 	virtual const sensor_enumeration_t& Sensors() const = 0;
 	virtual Unit SensorUnit(const wstring& path) const = 0;
 	virtual float SensorValue(const wstring& path, bool fahrenheit = false) const = 0;
@@ -247,6 +248,7 @@ public:
 	constexpr wstring DisplayName() const override {
 		return displayName;
 	}
+	constexpr bool RefreshNeeded() const override { return false; }
 	const sensor_enumeration_t& Sensors() const override {
 		return sensors;
 	}
@@ -828,6 +830,8 @@ struct RXM {
 				wstring t = form, valString{ L'-' };
 				if (Live(rxm)) {
 					auto m = rxm->FromPath(path);
+					if (m->RefreshNeeded())
+						m->Refresh();
 					last = m->SensorValue(path);
 					valString = m->SensorValueString(path, rxm->fahrenheit == 1);
 				}
