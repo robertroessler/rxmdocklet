@@ -40,6 +40,7 @@
 #include <map>
 #include <vector>
 #include <regex>
+#include "hwisenssm2.h"
 #include "sdk/DockletSDK.h"
 #include "TlHelp32.h"
 #include "resource.h"
@@ -464,8 +465,6 @@ Unit GPUZMonitor::unitFromRecord(const SensorRecord& r) const
 	Implementation of IMonitor for HWiNFO
 */
 class HWiMonitor : public MonitorCommonImpl<DWORD>{
-#include "hwisenssm2.h"
-
 	typedef HWiNFO_SENSORS_SHARED_MEM2 HWiSharedMem;
 
 	int enumerateSensors();
@@ -483,6 +482,10 @@ public:
 
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create(L"" HWiNFO_SENSORS_MAP_FILE_NAME2) && enumerateSensors() > 0; });
+	}
+	bool RefreshNeeded() const override {
+		const auto& h = hwi();
+		return h.dwNumSensorElements != origSensors || h.dwNumReadingElements != origReadings;
 	}
 	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) { return rE(i).Value; });
