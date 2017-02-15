@@ -38,6 +38,9 @@
     <ClInclude Include="Resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="hwisenssm2.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="sdk\DockletSDK.h">
       <Filter>Header Files</Filter>
     </ClInclude>
