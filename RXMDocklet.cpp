@@ -564,7 +564,7 @@ Unit HWiMonitor::unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const
 		static const map<string, Unit> extendedTypes {
 			{"%", UsagePerCent},
 			{"MB", MB}, {"MB/s", MBs}, {"Yes/No", YorN}, {"GT/s", GTs},
-			{"T", T}, {"x", X}, {"KB/s", KBs}
+			{"T", T}, {"x", X}, {"KB/s", KBs}, {"GB", GB}
 		};
 		const auto&& u = extendedTypes.find(r.szUnit);
 		return u != cend(extendedTypes) ? u->second : Unknown; // we did our best
