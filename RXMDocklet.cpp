@@ -1,7 +1,7 @@
 /*
 	RXMDocklet.cpp - "X" Monitor Docklet [DLL] implementation(s)
 
-	Copyright(c) 2009-2016, Robert Roessler
+	Copyright(c) 2009-2017, Robert Roessler
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -1256,14 +1256,14 @@ void CALLBACK OnGetInformation(char *szName, char *szAuthor, int *iVersion, char
 	strcpy(szAuthor, "Robert Roessler");
 	*iVersion = 200;
 	strcpy(szNotes,
-		"ObjectDock display docklet"
+		"ObjectDock display docklet\r\n"
 		"for GPU-Z (www.techpowerup.com/gpuz/),\r\n"
 		"HWiNFO (www.hwinfo.com),\r\n"
 		"MSI Afterburner (gaming.msi.com/features/afterburner),\r\n"
 		"SpeedFan (www.almico.com/speedfan.php),\r\n"
 		"and CPUID HWMonitor (www.cpuid.com).\r\n"
 		"\r\n"
-		"Copyright (C) 2009-2016 Robert Roessler\r\n"
+		"Copyright (C) 2009-2017 Robert Roessler\r\n"
 		"www.rftp.com");
 }
 
