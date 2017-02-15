@@ -149,7 +149,7 @@ enum Unit {
 	// "extended" units from "comprehensive" providers
 	MB, MBs, YorN, GTs, T, X, KBs,
 	// even MORE "extended" units
-	FPS, MS,
+	FPS, MS, GB,
 	Unknown
 };
 
@@ -163,7 +163,7 @@ static const int displayFractional[] {
 	0,
 	3, 0, 0, 3, 3, 1, 1,
 	0, 3, 0, 1, 0, 0, 3,
-	0, 0,
+	0, 0, 0,
 	0
 };
 
@@ -1537,7 +1537,7 @@ void RXMConfigure::OnTvnGetInfoTipSensorTree(NMHDR *pNMHDR, LRESULT *pResult)
 			L"None",
 			L"V", L"\u00b0", L"rpm", L"A", L"W", L"MHz", L"%",
 			L"MB", L"MB/s", L"", L"GT/s", L"T", L"x", L"KB/s",
-			L"F/s", L"ms",
+			L"F/s", L"ms", L"GB",
 			L"???"
 		};
 		wstringstream tipSS;
