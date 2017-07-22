@@ -49,6 +49,31 @@
 #define new DEBUG_NEW
 #endif
 
+/*
+	Helper template functions to derive [c]begin/[c]end iterators for C++
+	"native" multidimensional arrays... ultimately to be used with the std
+	library, e.g. copy(...).
+*/
+
+// (make sure we are "noexcept" to the maximum extent possible)
+#define NOEXCEPT_RETURN(...) noexcept(noexcept(__VA_ARGS__)) { return (__VA_ARGS__); }
+
+template <typename T>
+constexpr decltype(auto) decayed_begin(T&& c)
+NOEXCEPT_RETURN(std::begin(std::forward<T>(c)))
+
+template <typename T>
+constexpr decltype(auto) decayed_end(T&& c)
+NOEXCEPT_RETURN(std::end(std::forward<T>(c)))
+
+template <typename T, std::size_t N>
+constexpr decltype(auto) decayed_begin(T(&c)[N])
+NOEXCEPT_RETURN(reinterpret_cast<typename std::remove_all_extents<T>::type*>(c))
+
+template <typename T, std::size_t N>
+constexpr decltype(auto) decayed_end(T(&c)[N])
+NOEXCEPT_RETURN(reinterpret_cast<typename std::remove_all_extents<T>::type*>(c + N))
+
 using namespace std;
 
 /*
@@ -1322,14 +1347,10 @@ BOOL CALLBACK OnRightButtonClick(RXM* rxm, POINT *ptCursor, SIZE *sizeDocklet)
 		RXMConfigure cfg(rxm);
 		const int oldPage = rxm->page, oldFahrenheit = rxm->fahrenheit, oldImage = rxm->image;
 		decltype(rxm->layout) oldLayout;
-		for (int p = 0; p < Pages; ++p)
-			for (int s = 0; s < LayoutsPerPage; ++s)
-				oldLayout[p][s] = rxm->layout[p][s];
+		copy(decayed_begin(rxm->layout), decayed_end(rxm->layout), decayed_begin(oldLayout));
 		if (cfg.DoModal() != IDOK) {
 			// user changed their mind, put it all back... AS REQUIRED
-			for (int p = 0; p < Pages; ++p)
-				for (int s = 0; s < LayoutsPerPage; ++s)
-					rxm->layout[p][s] = oldLayout[p][s];
+			copy(decayed_begin(oldLayout), decayed_end(oldLayout), decayed_begin(rxm->layout));
 			// ... and try to save a little [resource allocation] work
 			if (rxm->image != oldImage) {
 				rxm->image = oldImage;
