@@ -225,6 +225,7 @@ public:
 	virtual bool RefreshNeeded() const = 0;
 	virtual const sensor_enumeration_t& Sensors() const = 0;
 	virtual Unit SensorUnit(const wstring& path) const = 0;
+	virtual wstring SensorUnitString(const wstring& path, bool fahrenheit = false) const = 0;
 	virtual float SensorValue(const wstring& path, bool fahrenheit = false) const = 0;
 	virtual wstring SensorValueString(const wstring& path, bool fahrenheit = false) const = 0;
 };
@@ -277,9 +278,29 @@ public:
 	const sensor_enumeration_t& Sensors() const override {
 		return sensors;
 	}
-	Unit SensorUnit(const wstring& path) const override {
+	constexpr Unit SensorUnit(const wstring& path) const override {
 		const auto&& u = units.find(path);
 		return (u != cend(units)) ? u->second : None;
+	}
+	constexpr wstring SensorUnitString(const wstring& path, bool fahrenheit) const override {
+		const auto u = SensorUnit(path);
+		/*
+			display representation for above "universal" units
+
+			N.B. - Unit enums will be used as indices into this array, so
+			make SURE they are kept in sync!
+		*/
+		static const wchar_t* unitString[]{
+			L"None",
+			L"V", L"\u00b0", L"rpm", L"A", L"W", L"MHz", L"%",
+			L"MB", L"MB/s", L"", L"GT/s", L"T", L"x", L"KB/s",
+			L"F/s", L"ms", L"GB",
+			L"???"
+		};
+		wstring s = unitString[u];
+		if (u == Degrees)
+			s.push_back(fahrenheit ? L'F' : L'C');
+		return s;
 	}
 	wstring SensorValueString(const wstring& path, bool fahrenheit) const override {
 		wchar_t b[16];
@@ -1546,28 +1567,10 @@ void RXMConfigure::OnTvnGetInfoTipSensorTree(NMHDR *pNMHDR, LRESULT *pResult)
 	if (!SensorTree.ItemHasChildren(h)) {
 		const wstring& path = pathFromTree[h];
 		const auto m = rxm->FromPath(path);
-		const wstring s = m->SensorValueString(path, CelsiusOrFahrenheit == 1);
-		const rxm::Unit u = m->SensorUnit(path);
-		/*
-			display representation for above "universal" units
-
-			N.B. - Unit enums will be used as indices into this array, so
-			make SURE they are kept in sync!
-		*/
-		static const wchar_t* unitString[] {
-			L"None",
-			L"V", L"\u00b0", L"rpm", L"A", L"W", L"MHz", L"%",
-			L"MB", L"MB/s", L"", L"GT/s", L"T", L"x", L"KB/s",
-			L"F/s", L"ms", L"GB",
-			L"???"
-		};
-		wstringstream tipSS;
-		tipSS << s;
-		if (unitString[u][0])
-			tipSS << L' ' << unitString[u];
-		if (u == Degrees)
-			tipSS << ((CelsiusOrFahrenheit == 1) ? L'F' : L'C');
-		wcsncpy(pGetInfoTip->pszText, tipSS.str().c_str(), pGetInfoTip->cchTextMax);
+		const bool fahrenheit = CelsiusOrFahrenheit == 1;
+		wstring t = m->SensorValueString(path, fahrenheit);
+		t.push_back(L' '), t.append(m->SensorUnitString(path, fahrenheit));
+		wcsncpy(pGetInfoTip->pszText, t.c_str(), pGetInfoTip->cchTextMax);
 	}
 	*pResult = 0;
 }
