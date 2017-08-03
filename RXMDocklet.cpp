@@ -960,23 +960,20 @@ static inline Color COLORREF2Color(COLORREF cr)
 struct RXM {
 	HWND hwndDocklet;					// THIS docklet's HWND
 	HINSTANCE hInstance;				// docklet's DLL HINSTANCE
-	int page;							// current layout page
-	int timer;							// Windows timer id
-	int image;							// background selection
-	int fahrenheit;						// 1=do Fahrenheit conversion
+	int page = 0;						// current layout page
+	int timer = 0;						// Windows timer id
+	int image = 0;						// background selection
+	int fahrenheit = 0;					// 1=do Fahrenheit conversion
 	wstring_monitor_map_t monitor;		// RXM Monitor-specific impls
 	struct Layout {
 		wstring path;					// our sensor
-		wstring form;					// y-axis pos
-		COLORREF rgb;					// this color
-		float last;						// last value
-		StringAlignment align;			// left|right
+		COLORREF rgb = 0;				// this color
+		float last = -1;				// last value
 
 		bool Active() const { return !path.empty(); }
 		void Assign(COLORREF c) { rgb = c; }
 		void Assign(const wstring& p, COLORREF c) { path = p, rgb = c; }
 		void Clear() { path.clear(), rgb = 0, last = -1; }
-		void Create(const wstring& f, StringAlignment a) { form = f, rgb = 0, last = -1, align = a; }
 		bool Live(RXM* rxm) const {
 			const auto m = rxm->monitor.find(head(path));
 			if (m == cend(rxm->monitor))
@@ -984,10 +981,10 @@ struct RXM {
 			const auto& s = m->second.get()->Sensors();
 			return s.empty() ? false : s.find(path) != cend(s);
 		}
-		void Render(RXM* rxm, Graphics& g, Gdiplus::Font& f, RectF& r, StringFormat& sf) {
+		void Render(RXM* rxm, Graphics& g, const Gdiplus::Font& f, const RectF& r, const StringFormat& sf) {
 			// display individual sensor with supplied GdiPlus formatting & attributes AS REQUIRED
 			if (Active()) {
-				wstring t = form, valString{ L'-' };
+				wstring valString{ L'-' };
 				if (Live(rxm)) {
 					auto m = rxm->FromPath(path);
 					if (m->RefreshNeeded())
@@ -995,9 +992,7 @@ struct RXM {
 					last = m->SensorValue(path);
 					valString = m->SensorValueString(path, rxm->fahrenheit == 1);
 				}
-				t.replace(t.find(L"%s"), 2, valString);
-				sf.SetAlignment(align);
-				g.DrawString(t.c_str(), -1, &f, r, &sf, &SolidBrush(COLORREF2Color(rgb)));
+				g.DrawString(valString.c_str(), -1, &f, r, &sf, &SolidBrush(COLORREF2Color(rgb)));
 			}
 		}
 		bool UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
@@ -1110,14 +1105,6 @@ public:
 static void initializeRXM(RXM* rxm, HWND hwndDocklet, HINSTANCE hInstance)
 {
 	rxm->hwndDocklet = hwndDocklet, rxm->hInstance = hInstance;
-	rxm->page = 0, rxm->timer = 0, rxm->image = 0, rxm->fahrenheit = 0;
-
-	static const wstring layoutStrings[LayoutsPerPage / 2] { L"%s\n\n\n\n", L"\n%s\n\n\n", L"\n\n%s\n\n", L"\n\n\n%s\n" };
-
-	for (auto& p : rxm->layout)
-		for (int s = 0; s < LayoutsPerPage; ++s)
-			// set location-based formatting (only 4 formats, used both on left and right)
-			p[s].Create(layoutStrings[s & 0x03], (s < 4) ? StringAlignmentNear : StringAlignmentFar);
 }
 
 static void loadProfile(RXM* rxm, const string& ini, const string& iniGroup)
@@ -1207,17 +1194,24 @@ static void renderPage(RXM* rxm, bool force = false)
 		return l.UpdateRequired(rxm);
 		})) {
 		// yup, update *is* required
+		static const RectF zones[]{
+			{ 0, 0, 128, 32 }, { 0, 32, 128, 32 }, { 0, 64, 128, 32 }, { 0, 96, 128, 32 }
+		};
 		auto bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
 		Graphics g(bm.get());
 		g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
 		StringFormat sf(0, LANG_NEUTRAL);
 		sf.SetLineAlignment(StringAlignmentCenter);
-		static RectF r(0, 0, 128, 128);
 		Gdiplus::Font f(L"Arial", 15);
 
 		// FOREACH [in-use] layout on current page...
-		for (auto& l : rxm->layout[rxm->page])
-			l.Render(rxm, g, f, r, sf);
+		auto& layouts = rxm->layout[rxm->page];
+		for (auto& l : layouts) {
+			const auto i = &l - &layouts[0];
+			const auto zone = i & 3;
+			sf.SetAlignment(i < LayoutsPerPage / 2 ? StringAlignmentNear : StringAlignmentFar);
+			l.Render(rxm, g, f, zones[zone], sf);
+		}
 
 		DockletSetImageOverlay(rxm->hwndDocklet, bm.release());
 	}
