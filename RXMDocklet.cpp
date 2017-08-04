@@ -981,18 +981,20 @@ struct RXM {
 			const auto& s = m->second.get()->Sensors();
 			return s.empty() ? false : s.find(path) != cend(s);
 		}
-		void Render(RXM* rxm, Graphics& g, const Gdiplus::Font& f, const RectF& r, const StringFormat& sf) {
+		void Render(RXM* rxm, Graphics& g, const Gdiplus::Font& f, const RectF& r, const StringFormat& sf, bool unitString = false) {
 			// display individual sensor with supplied GdiPlus formatting & attributes AS REQUIRED
 			if (Active()) {
-				wstring valString{ L'-' };
+				wstring t{ L'-' };
 				if (Live(rxm)) {
 					auto m = rxm->FromPath(path);
 					if (m->RefreshNeeded())
 						m->Refresh();
 					last = m->SensorValue(path);
-					valString = m->SensorValueString(path, rxm->fahrenheit == 1);
+					t = unitString ?
+						m->SensorUnitString(path, rxm->fahrenheit == 1) :
+						m->SensorValueString(path, rxm->fahrenheit == 1);
 				}
-				g.DrawString(valString.c_str(), -1, &f, r, &sf, &SolidBrush(COLORREF2Color(rgb)));
+				g.DrawString(t.c_str(), -1, &f, r, &sf, &SolidBrush(COLORREF2Color(rgb)));
 			}
 		}
 		bool UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
@@ -1195,23 +1197,46 @@ static void renderPage(RXM* rxm, bool force = false)
 		})) {
 		// yup, update *is* required
 		static const RectF zones[]{
-			{ 0, 0, 128, 32 }, { 0, 32, 128, 32 }, { 0, 64, 128, 32 }, { 0, 96, 128, 32 }
+			{ 0, 0, 128, 32 }, { 0, 32, 128, 32 }, { 0, 64, 128, 32 }, { 0, 96, 128, 32 },
+			{ 0, 0, 128, 64 }, { 0, 64, 128, 64 }
 		};
 		auto bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
 		Graphics g(bm.get());
 		g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
-		StringFormat sf(0, LANG_NEUTRAL);
+		StringFormat sf(StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL);
+		sf.SetTrimming(StringTrimmingNone);
 		sf.SetLineAlignment(StringAlignmentCenter);
-		Gdiplus::Font f(L"Arial", 15);
 
-		// FOREACH [in-use] layout on current page...
 		auto& layouts = rxm->layout[rxm->page];
-		for (auto& l : layouts) {
-			const auto i = &l - &layouts[0];
-			const auto zone = i & 3;
-			sf.SetAlignment(i < LayoutsPerPage / 2 ? StringAlignmentNear : StringAlignmentFar);
-			l.Render(rxm, g, f, zones[zone], sf);
-		}
+		const auto n = count_if(cbegin(layouts), cend(layouts), [](auto& l) { return l.Active(); });
+		// (construct appropriate Font for below "dynamic" layout)
+		Gdiplus::Font f(L"Arial", n > 2 ? 15e0F : 30e0F);
+
+		// FOREACH [in-use] Layout on current page...
+		auto rendered = 0;
+		for (auto& l : layouts)
+			if (l.Active())
+				// do "dynamic" layout based on # of active Layouts in the page...
+				switch (n) {
+				case 1:
+					// "zoomed": 1 sensor, value on top, unit of bottom
+					sf.SetAlignment(StringAlignmentCenter);
+					l.Render(rxm, g, f, zones[4], sf), ++rendered;
+					l.Render(rxm, g, f, zones[5], sf, true);
+					break;
+				case 2:
+					// "large": 2 sensors, 1 on top, 1 on bottom
+					sf.SetAlignment(StringAlignmentCenter);
+					l.Render(rxm, g, f, zones[rendered ? 5 : 4], sf), ++rendered;
+					break;
+				default: {
+					// "2-column": up to 4 sensors on left, up to 4 sensors on right
+					const auto i = &l - &layouts[0];
+					sf.SetAlignment(i < LayoutsPerPage / 2 ? StringAlignmentNear : StringAlignmentFar);
+					l.Render(rxm, g, f, zones[i & 3], sf), ++rendered;
+					break;
+				}
+				}
 
 		DockletSetImageOverlay(rxm->hwndDocklet, bm.release());
 	}
