@@ -305,7 +305,15 @@ public:
 	wstring SensorValueString(const wstring& path, bool fahrenheit) const override {
 		wchar_t b[16];
 		const auto u = SensorUnit(path);
-		swprintf(b, 16, L"%.*f", displayFractional[u], SensorValue(path, fahrenheit));
+		const auto v = SensorValue(path, fahrenheit);
+		auto w = displayFractional[u];
+		// use "dynamic precision reduction" to stay within ~4 digits
+		if (w == 3)
+			if (v >= 100)
+				w = 1;
+			else if (v >= 10)
+				w = 2;
+		swprintf(b, 16, L"%.*f", w, v);
 		return b;
 	}
 };
