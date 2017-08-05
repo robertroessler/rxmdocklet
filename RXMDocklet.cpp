@@ -179,20 +179,6 @@ enum Unit {
 };
 
 /*
-	# of fractional digits to display for above "universal" units
-
-	N.B. - Unit enums will be used as indices into this array, so
-	make SURE they are kept in sync!
-*/
-static const int displayFractional[] {
-	0,
-	3, 0, 0, 3, 3, 1, 1,
-	0, 3, 0, 1, 0, 0, 3,
-	0, 0, 0,
-	0
-};
-
-/*
 	utility functions for accessing [sensor] path components
 */
 static wstring head(const wstring& path)
@@ -303,16 +289,35 @@ public:
 		return s;
 	}
 	wstring SensorValueString(const wstring& path, bool fahrenheit) const override {
-		wchar_t b[16];
 		const auto u = SensorUnit(path);
+		/*
+			# of fractional digits to display for above "universal" units
+
+			N.B. - Unit enums will be used as indices into this array, so
+			make SURE they are kept in sync!
+		*/
+		static const int displayFractional[]{
+			0,
+			3, 0, 0, 3, 3, 1, 1,
+			0, 3, 0, 1, 0, 0, 3,
+			0, 0, 0,
+			0
+		};
 		const auto v = SensorValue(path, fahrenheit);
 		auto w = displayFractional[u];
-		// use "dynamic precision reduction" to stay within ~4 digits
-		if (w == 3)
+		/*
+			Use "dynamic precision reduction" to stay within ~4 digits...
+			"fractional digits" width value is a *hint*, not absolute!
+		*/
+		if (w == 1) {
+			if (v >= 1000)
+				w = 0;
+		} else if (w == 3)
 			if (v >= 100)
 				w = 1;
 			else if (v >= 10)
 				w = 2;
+		wchar_t b[16];
 		swprintf(b, 16, L"%.*f", w, v);
 		return b;
 	}
