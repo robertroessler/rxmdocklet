@@ -164,6 +164,8 @@ typedef set<sensor_t> sensor_enumeration_t;
 
 enum { Pages = 4, LayoutsPerPage = 8, BackgroundImages = 10 };
 
+enum class RenderType { Normal = 0, Forced, StartFocus, EndFocus };
+
 /*
 	"universal" units to which all Monitor-specific units are mapped
 */
@@ -257,13 +259,9 @@ protected:
 	}
 
 public:
-	constexpr wstring DisplayName() const override {
-		return displayName;
-	}
+	constexpr wstring DisplayName() const override { return displayName; }
 	constexpr bool RefreshNeeded() const override { return false; }
-	const sensor_enumeration_t& Sensors() const override {
-		return sensors;
-	}
+	const sensor_enumeration_t& Sensors() const override { return sensors; }
 	constexpr Unit SensorUnit(const wstring& path) const override {
 		const auto&& u = units.find(path);
 		return (u != cend(units)) ? u->second : None;
@@ -863,6 +861,8 @@ struct RXM {
 	int timer = 0;						// Windows timer id
 	int image = 0;						// background selection
 	int fahrenheit = 0;					// 1=do Fahrenheit conversion
+	int focusedSensor = 0;				// alt-click focused sensor #
+	int focusedTicksRemaining = 0;		// track alt-click focus mode
 	wstring_monitor_map_t monitor;		// RXM Monitor-specific impls
 	struct Layout {
 		wstring path;					// our sensor
@@ -878,7 +878,7 @@ struct RXM {
 			if (m == cend(rxm->monitor))
 				return false;
 			const auto& s = m->second.get()->Sensors();
-			return s.empty() ? false : s.find(path) != cend(s);
+			return s.find(path) != cend(s);
 		}
 		void Render(RXM* rxm, Graphics& g, const Gdiplus::Font& f, const RectF& r, const StringFormat& sf, bool unitString = false) {
 			// display individual sensor with supplied GdiPlus formatting & attributes AS REQUIRED
@@ -899,6 +899,10 @@ struct RXM {
 		bool UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
 	} layout[Pages][LayoutsPerPage];	// sensor layouts (all pages)
 
+	int Focus() const { return focusedSensor; }
+	bool DecayFocus() { return --focusedTicksRemaining == 0; }
+	bool Focused() const { return focusedTicksRemaining > 0; }
+	void StartFocus(int sensor, int n) { focusedSensor = sensor, focusedTicksRemaining = n; }
 	IMonitor* FromPath(wstring path) const { return monitor.find(head(path))->second.get(); }
 };
 
@@ -1088,57 +1092,104 @@ static void renderBackground(RXM* rxm)
 	DockletSetImage(rxm->hwndDocklet, bm.release());
 }
 
-static void renderPage(RXM* rxm, bool force = false)
+static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* pt = nullptr, SIZE* sz = nullptr)
 {
 	// display all sensors on current page AS REQUIRED
-	if (force || any_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [rxm](const RXM::Layout& l) {
-		return l.UpdateRequired(rxm);
-		})) {
-		// yup, update *is* required
-		static const RectF zones[]{
-			{ 0, 0, 128, 32 }, { 0, 32, 128, 32 }, { 0, 64, 128, 32 }, { 0, 96, 128, 32 },
-			{ 0, 0, 128, 64 }, { 0, 64, 128, 64 }
-		};
-		auto bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
-		Graphics g(bm.get());
-		g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
-		StringFormat sf(StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL);
-		sf.SetTrimming(StringTrimmingNone);
-		sf.SetLineAlignment(StringAlignmentCenter);
+	if (render != RenderType::StartFocus &&
+		render != RenderType::EndFocus &&
+		render != RenderType::Forced &&
+		!rxm->Focused() &&
+		none_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [rxm](auto& l) {
+			return l.UpdateRequired(rxm); }))
+		return; // (nothing to do)
 
-		auto& layouts = rxm->layout[rxm->page];
-		const auto n = count_if(cbegin(layouts), cend(layouts), [](auto& l) { return l.Active(); });
-		// (construct appropriate Font for below "dynamic" layout)
-		Gdiplus::Font f(L"Arial", n > 2 ? 15e0F : 30e0F);
+	// check for (and handle) render state machine state changes (I)
+	if (render == RenderType::EndFocus || render == RenderType::Forced)
+		rxm->StartFocus(0, 0);
 
+	// yup, some kind of update *is* required, build rendering environment, part I...
+	static const RectF zones[]{
+		{ 0, 0, 128, 32 }, { 0, 32, 128, 32 }, { 0, 64, 128, 32 }, { 0, 96, 128, 32 },
+		{ 0, 0, 128, 64 }, { 0, 64, 128, 64 }
+	};
+	auto bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
+	Graphics g(bm.get());
+	g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+	StringFormat sf(StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL);
+	sf.SetTrimming(StringTrimmingNone);
+	sf.SetLineAlignment(StringAlignmentCenter);
+
+	// build rendering environment, part II...
+	auto& layouts = rxm->layout[rxm->page];
+	const auto n = count_if(cbegin(layouts), cend(layouts), [](auto& l) { return l.Active(); });
+	const auto n_effective = render == RenderType::StartFocus || rxm->Focused() ? 1 : n;
+	// (construct appropriate Font for below "dynamic" layout)
+	Gdiplus::Font f(L"Arial", n_effective > 2 ? 15e0F : 30e0F);
+	auto rendered = 0;
+
+	// workhouse lambda for matching click to sensor
+	auto matchRectF = [&](const POINT& pt, const SIZE& sz) {
+		const REAL cx = (REAL)sz.cx / 128;
+		const REAL cy = (REAL)sz.cy / 128;
+		RectF z[6];
+		copy(decayed_begin(zones), decayed_end(zones), decayed_begin(z));
+		for (auto& r : z)
+			r.Width *= cx, r.Height *= cy;
+		if (n > 2) {
+			for (auto i = 0; i < 4; ++i)
+				if (z[i].Contains(REAL(pt.x), REAL(pt.y)))
+					return pt.x < z[i].Width / 2 ? i : i + 4;
+		} else
+			for (auto i = 4; i < 6; ++i)
+				if (z[i].Contains(REAL(pt.y), REAL(pt.y)))
+					return i == 4 ? 0 : 1;
+		return -1; // (indicate NO match found)
+	};
+
+	// workhorse lambda for "dynamic" layout based on # of active Layouts in the page...
+	auto doSingleLayout = [&](auto& l, auto n) {
+		switch (n) {
+		case 1:
+			// "zoomed": 1 sensor, value on top, unit of bottom
+			sf.SetAlignment(StringAlignmentCenter);
+			l.Render(rxm, g, f, zones[4], sf), ++rendered;
+			l.Render(rxm, g, f, zones[5], sf, true);
+			break;
+		case 2:
+			// "large": 2 sensors, 1 on top, 1 on bottom
+			sf.SetAlignment(StringAlignmentCenter);
+			l.Render(rxm, g, f, zones[rendered ? 5 : 4], sf), ++rendered;
+			break;
+		default: {
+			// "2-column": up to 4 sensors on left, up to 4 sensors on right
+			const auto i = &l - &layouts[0];
+			sf.SetAlignment(i < LayoutsPerPage / 2 ? StringAlignmentNear : StringAlignmentFar);
+			l.Render(rxm, g, f, zones[i & 3], sf), ++rendered;
+			break;
+		}
+		}
+	};
+
+	// check for (and handle) render state machine state changes (II)
+	if (render == RenderType::StartFocus) {
+		const auto i = matchRectF(*pt, *sz);
+		if (i < 0)
+			return; // (treat failed match as a no-op)
+		rxm->StartFocus(i, 5);
+	}
+
+	if (rxm->Focused()) {
+		// for single "focused" layout
+		auto& l = layouts[rxm->Focus()];
+		if (l.Active())
+			doSingleLayout(l, 1);
+	} else
 		// FOREACH [in-use] Layout on current page...
-		auto rendered = 0;
 		for (auto& l : layouts)
 			if (l.Active())
-				// do "dynamic" layout based on # of active Layouts in the page...
-				switch (n) {
-				case 1:
-					// "zoomed": 1 sensor, value on top, unit of bottom
-					sf.SetAlignment(StringAlignmentCenter);
-					l.Render(rxm, g, f, zones[4], sf), ++rendered;
-					l.Render(rxm, g, f, zones[5], sf, true);
-					break;
-				case 2:
-					// "large": 2 sensors, 1 on top, 1 on bottom
-					sf.SetAlignment(StringAlignmentCenter);
-					l.Render(rxm, g, f, zones[rendered ? 5 : 4], sf), ++rendered;
-					break;
-				default: {
-					// "2-column": up to 4 sensors on left, up to 4 sensors on right
-					const auto i = &l - &layouts[0];
-					sf.SetAlignment(i < LayoutsPerPage / 2 ? StringAlignmentNear : StringAlignmentFar);
-					l.Render(rxm, g, f, zones[i & 3], sf), ++rendered;
-					break;
-				}
-				}
+				doSingleLayout(l, n);
 
-		DockletSetImageOverlay(rxm->hwndDocklet, bm.release());
-	}
+	DockletSetImageOverlay(rxm->hwndDocklet, bm.release());
 }
 
 static void saveProfile(RXM* rxm, const string& ini, const string& iniGroup, bool asDefault = false)
@@ -1229,15 +1280,23 @@ void CALLBACK OnGetInformation(char *szName, char *szAuthor, int *iVersion, char
 		"www.rftp.com");
 }
 
-BOOL CALLBACK OnLeftButtonClick(RXM* rxm, POINT *ptCursor, SIZE *sizeDocklet)
+BOOL CALLBACK OnLeftButtonClick(RXM* rxm, POINT *pt, SIZE *sz)
 {
-	// show "next" page of sensors (N.B. - "Pages" must be a power of 2)
-	const int delta = (::GetKeyState(VK_SHIFT) < 0) ? -1 : 1;
-	const int i = rxm->page;
-	do
-		rxm->page = (rxm->page + delta) & (Pages - 1);
-	while (!pageIsActive(rxm) && rxm->page != i);
-	renderPage(rxm, rxm->page != i);
+	// check status of ALT (aka MENU) modifier key...
+	if (!rxm->Focused() && ::GetAsyncKeyState(VK_MENU) < 0)
+		// switch into "zoomed"/"focused" mode for a few seconds
+		renderPage(rxm, RenderType::StartFocus, pt, sz);
+	else {
+		// show "next" page of sensors (N.B. - "Pages" must be a power of 2)
+		// (click moves "forward" in set of pages, shift-click moves "back")
+		const int delta = ::GetAsyncKeyState(VK_SHIFT) < 0 ? -1 : 1;
+		const int i = rxm->page;
+		do
+			rxm->page = (rxm->page + delta) & (Pages - 1);
+		while (!pageIsActive(rxm) && rxm->page != i);
+		if (rxm->page != i)
+			renderPage(rxm, RenderType::Forced);
+	}
 	return TRUE;
 }
 
@@ -1248,7 +1307,7 @@ void CALLBACK OnProcessMessage(RXM* rxm, HWND hwnd, UINT uMsg, WPARAM wParam, LP
 	// WM_TIMER: update sensor display(s) AS REQUIRED
 	case WM_TIMER:
 		if (wParam == 43)
-			renderPage(rxm);
+			renderPage(rxm, rxm->Focused() && rxm->DecayFocus() ? RenderType::EndFocus : RenderType::Normal);
 		break;
 
 	// WM_POWERBROADCAST: on resume, re-enumerate sensors AS REQUIRED
@@ -1294,7 +1353,7 @@ BOOL CALLBACK OnRightButtonClick(RXM* rxm, POINT *ptCursor, SIZE *sizeDocklet)
 				renderBackground(rxm);
 			}
 			rxm->page = oldPage, rxm->fahrenheit = oldFahrenheit;
-			renderPage(rxm, true);
+			renderPage(rxm, RenderType::Forced);
 		}
 		rv = TRUE;
 		break;
@@ -1373,7 +1432,7 @@ void RXMConfigure::assignColor(int sensor)
 		return;	// nothing to do
 
 	l.Assign(((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->GetColor());
-	renderPage(rxm, true);
+	renderPage(rxm, RenderType::Forced);
 }
 
 void RXMConfigure::assignSensor(int sensor)
@@ -1478,7 +1537,7 @@ void RXMConfigure::unassignSensor(int sensor)
 	((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(RGB(192, 192, 192));
 	((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(L"");
 	rxm->layout[rxm->page][sensor].Clear();
-	renderPage(rxm, true);
+	renderPage(rxm, RenderType::Forced);
 }
 
 BEGIN_MESSAGE_MAP(RXMConfigure, CDialogEx)
@@ -1527,13 +1586,13 @@ END_MESSAGE_MAP()
 void RXMConfigure::OnBnClickedCelsius()
 {
 	rxm->fahrenheit = CelsiusOrFahrenheit = 0;
-	renderPage(rxm, true);
+	renderPage(rxm, RenderType::Forced);
 }
 
 void RXMConfigure::OnBnClickedFahrenheit()
 {
 	rxm->fahrenheit = CelsiusOrFahrenheit = 1;
-	renderPage(rxm, true);
+	renderPage(rxm, RenderType::Forced);
 }
 
 void RXMConfigure::OnBnClickedSavelocal()
@@ -1587,7 +1646,7 @@ void RXMConfigure::OnTcnSelchangeSensorTab(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	rxm->page = SensorTab.GetCurSel();
 	initializeSensors();
-	renderPage(rxm, true);
+	renderPage(rxm, RenderType::Forced);
 	*pResult = 0;
 }
 
