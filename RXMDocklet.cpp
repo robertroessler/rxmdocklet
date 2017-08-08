@@ -1135,13 +1135,15 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		copy(decayed_begin(zones), decayed_end(zones), decayed_begin(z));
 		for (auto& r : z)
 			r.Width *= cx, r.Height *= cy;
+		const REAL x = REAL(pt.x);
+		const REAL y = REAL(pt.y);
 		if (n > 2) {
 			for (auto i = 0; i < 4; ++i)
-				if (z[i].Contains(REAL(pt.x), REAL(pt.y)))
+				if (z[i].Contains(x, y))
 					return pt.x < z[i].Width / 2 ? i : i + 4;
 		} else
 			for (auto i = 4; i < 6; ++i)
-				if (z[i].Contains(REAL(pt.y), REAL(pt.y)))
+				if (z[i].Contains(x, y))
 					return i == 4 ? 0 : 1;
 		return -1; // (indicate NO match found)
 	};
@@ -1173,8 +1175,8 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	// check for (and handle) render state machine state changes (II)
 	if (render == RenderType::StartFocus) {
 		const auto i = matchRectF(*pt, *sz);
-		if (i < 0)
-			return; // (treat failed match as a no-op)
+		if (i < 0 || !(layouts[i].Active() && layouts[i].Live(rxm)))
+			return; // (treat failed and/or useless match as a no-op)
 		rxm->StartFocus(i, 5);
 	}
 
