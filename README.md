@@ -56,14 +56,30 @@ Usage of RXMDocklet is simple:
 	works), and click on your dock's "Add Item" menu entry - that's it!
 
 *	left-click *on the docklet itself* will cycle through any pages that have
-	sensor values defined, while right-click will provide access to the Refresh
-	and Configuration functionality
+	sensor values defined (**holding down the SHIFT key** will cycle in reverse),
+    while right-click will provide access to the Refresh and Configuration
+    functionality
  
 *	besides establishing the sensor mappings themselves, the available options
 	include selecting the docklet backdrop image to display the values over,
 	saving the current mappings between sensors and pages / display slots on the
 	docklet, and the ever-popular choice of Celsius or Fahrenheit display of
 	temperature data
+
+## Advanced Features and Usage
+
+*   starting with v1.3, RXMDocklet now will automatically detect 1- and 2-
+    sensor pages, switching to a larger font for 2-sensor pages, and for 1-sensor
+    pages, use that same larger font, but with the value on the top, and a
+    descriptive "units" string on the bottom
+
+*   clicking on individual sensors in the normal docklet display - **with the ALT key
+    held down** - will *temporarily* switch to the 1-sensor enhanced view for that
+    sensor for about 5 seconds, and then revert to the normal view of that page's
+    sensors... this referred to as "focusing" or "zooming"
+
+*   also with v1.3, RXMDocklet will now *dynamically adjust* the displayed precision
+    of numeric values to make the best use of docklet real estate... within limits
 
 ## More Details
 
@@ -161,6 +177,12 @@ Possible items to work on - for myself or collaborators include
 * there will always be additional monitoring apps that can be supported inside
 RXMDocklet - it takes only a few hours (or less) to add a new one
 
+* although this may end up under **Probably Not** below, a more "universal" solution
+to dynamically adjusting displayed precision of numeric values would include actually
+selecting different units based on the magnitude of the value, *e.g.*, MB -> GB -> TB
+... RXMDocklet currently works exclusively with the units selected by the monitoring
+apps themselves
+
 * investigate RXMDocklet on 64-bit "docks" - not that this is NOT the same as
 whether your system itself is 32 or 64 -bit - it seems that many if not all of
 the available dock apps themselves are 32-bit, which of course [should] work on
@@ -172,3 +194,5 @@ Things that most likely will NOT happen include
 
 * let's see - MAYBE allowing the choice of fonts used on the docklet?  The one
 used in RXMDocklet ("Arial") is a compromise between size and readibility...
+**UPDATE** - as of v1.3, RXMdocklet *will* use a larger font in some automatically
+detected situations (see **Advanced Features and Usage** above)
