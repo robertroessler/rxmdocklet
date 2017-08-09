@@ -1152,7 +1152,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	auto doSingleLayout = [&](auto& l, auto n) {
 		switch (n) {
 		case 1:
-			// "zoomed": 1 sensor, value on top, unit of bottom
+			// "zoomed": 1 sensor, value on top, unit on bottom
 			sf.SetAlignment(StringAlignmentCenter);
 			l.Render(rxm, g, f, zones[4], sf), ++rendered;
 			l.Render(rxm, g, f, zones[5], sf, true);
