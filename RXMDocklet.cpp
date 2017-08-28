@@ -1127,21 +1127,22 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	Gdiplus::Font f(L"Arial", n_effective > 2 ? 15e0F : 30e0F);
 	auto rendered = 0;
 
-	// workhouse lambda for matching click to sensor
+	// workhorse lambda for matching click to sensor
 	auto matchRectF = [&](const POINT& pt, const SIZE& sz) {
-		const REAL cx = (REAL)sz.cx / 128;
-		const REAL cy = (REAL)sz.cy / 128;
-		RectF z[6];
-		copy(decayed_begin(zones), decayed_end(zones), decayed_begin(z));
+		const auto cx = (REAL)sz.cx / 128;
+		const auto cy = (REAL)sz.cy / 128;
+		remove_const<decltype(zones)>::type z;
+		copy(begin(zones), end(zones), begin(z));
 		for (auto& r : z)
 			r.Width *= cx, r.Height *= cy;
-		const REAL x = REAL(pt.x);
-		const REAL y = REAL(pt.y);
+		const auto x = REAL(pt.x);
+		const auto y = REAL(pt.y);
 		if (n > 2) {
 			for (auto i = 0; i < 4; ++i)
 				if (z[i].Contains(x, y))
 					return pt.x < z[i].Width / 2 ? i : i + 4;
-		} else
+		}
+		else
 			for (auto i = 4; i < 6; ++i)
 				if (z[i].Contains(x, y))
 					return i == 4 ? 0 : 1;
