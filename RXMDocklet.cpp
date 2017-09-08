@@ -224,10 +224,12 @@ public:
 template<typename T>
 class MonitorCommonImpl : public IMonitor {
 protected:
+	using value_type = T;
+
 	Mapping mapping;
 	wstring root, displayName;
 	sensor_enumeration_t sensors;
-	map<sensor_t, T> values;
+	map<sensor_t, value_type> values;
 	map<sensor_t, Unit> units;
 	RSpinLock lock;
 
@@ -433,6 +435,82 @@ Unit ABMonitor::unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const
 	};
 	const auto&& u = types.find(r.szSrcUnits);
 	return u != cend(types) ? u->second : Unknown;
+}
+
+/*
+	Implementation of IMonitor for Core Temp
+*/
+class CTMonitor : public MonitorCommonImpl<const float*> {
+
+#pragma pack(push, 1)
+	typedef struct core_temp_shared_data_ex {
+		// Original structure (CoreTempSharedData)
+		unsigned int	uiLoad[256];
+		unsigned int	uiTjMax[128];
+		unsigned int	uiCoreCnt;
+		unsigned int	uiCPUCnt;
+		float			fTemp[256];
+		float			fVID;
+		float			fCPUSpeed;
+		float			fFSBSpeed;
+		float			fMultiplier;
+		char			sCPUName[100];
+		unsigned char	ucFahrenheit;
+		unsigned char	ucDeltaToTjMax;
+		// uiStructVersion = 2
+		unsigned char	ucTdpSupported;
+		unsigned char	ucPowerSupported;
+		unsigned int	uiStructVersion;
+		unsigned int	uiTdp[128];
+		float			fPower[128];
+		float			fMultipliers[256];
+	} CoreTempSharedDataEx, *LPCoreTempSharedDataEx, **PPCoreTempSharedDataEx;
+#pragma pack(pop)
+
+	int enumerateSensors();
+	auto& ct() const { return *(const CoreTempSharedDataEx*)mapping.Base(); }
+
+public:
+	CTMonitor(wstring root, wstring displayName) : MonitorCommonImpl(root, displayName) {}
+	~CTMonitor() override {}
+
+	bool Refresh() override {
+		return refreshImpl([this]() { return mapping.Create(L"CoreTempMappingObjectEx") && enumerateSensors() > 0; });
+	}
+	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
+		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) {
+			const auto& c = ct();
+			return u == Degrees ?
+				(c.ucDeltaToTjMax ? c.uiTjMax[0] - *i : *i) :
+				*(const unsigned int*)i;
+		});
+	}
+};
+
+int CTMonitor::enumerateSensors()
+{
+	::OutputDebugString(L"CTMonitor::enumerateSensors...");
+	sensors.clear(), values.clear(), units.clear();
+	const auto& c = ct();
+
+	if (c.uiStructVersion != 2)
+		return 0; // nothing to see here...
+
+	for (decltype(c.uiCPUCnt) cpu = 0; cpu < c.uiCPUCnt; ++cpu)
+		for (decltype(c.uiCoreCnt) core = 0; core < c.uiCoreCnt; ++core) {
+			auto off = [c](auto i, auto j) { return c.uiCoreCnt * i + j; };
+			wstringstream pathSS;
+			pathSS << root << L'|' << L"CPU [#" << cpu << L"]: " << c.sCPUName << L'|' << L"Core #" << core;
+			wstring corePath(pathSS.str());
+			wstring tempPath(corePath + L" Temperature");
+			sensors.insert(tempPath), values[tempPath] = c.fTemp + off(cpu, core), units[tempPath] = Degrees;
+			::OutputDebugString(tempPath.c_str());
+			wstring loadPath(corePath + L" Load");
+			sensors.insert(loadPath), values[loadPath] = (value_type)(c.uiLoad + off(cpu, core)), units[loadPath] = UsagePerCent;
+			::OutputDebugString(loadPath.c_str());
+		}
+
+	return sensors.size();
 }
 
 /*
@@ -1230,6 +1308,7 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 
 	// create the specialized Monitors...
 	rxm->monitor.emplace(L"ABM", make_unique<ABMonitor>(L"ABM", L"AfterBurner"));
+	rxm->monitor.emplace(L"CT", make_unique<CTMonitor>(L"CT", L"Core Temp"));
 	rxm->monitor.emplace(L"GPUZ", make_unique<GPUZMonitor>(L"GPUZ", L"GPU-Z"));
 	rxm->monitor.emplace(L"HWM", make_unique<HWMonitor>(L"HWM", L"HWMonitor"));
 	rxm->monitor.emplace(L"SF", make_unique<SFMonitor>(L"SF", L"SpeedFan"));
@@ -1276,6 +1355,7 @@ void CALLBACK OnGetInformation(char *szName, char *szAuthor, int *iVersion, char
 		"ObjectDock display docklet\r\n"
 		"for GPU-Z (www.techpowerup.com/gpuz/),\r\n"
 		"MSI Afterburner (gaming.msi.com/features/afterburner),\r\n"
+		"Core Temp (www.alcpu.com/CoreTemp/),\r\n"
 		"SpeedFan (www.almico.com/speedfan.php),\r\n"
 		"and CPUID HWMonitor (www.cpuid.com).\r\n"
 		"\r\n"

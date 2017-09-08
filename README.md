@@ -40,6 +40,7 @@ received a workout in 32-bit form.
 * GPU-Z
 * HWiNFO (1)
 * MSI Afterburner
+* Core Temp
 * SpeedFan
 * CPUID HWMonitor (2)
 
