@@ -598,12 +598,10 @@ Unit GPUZMonitor::unitFromRecord(const SensorRecord& r) const
 	Implementation of IMonitor for HWiNFO
 */
 class HWiMonitor : public MonitorCommonImpl<DWORD>{
-	typedef HWiNFO_SENSORS_SHARED_MEM2 HWiSharedMem;
-
 	int enumerateSensors();
-	HWiSharedMem& hwi() const { return *(HWiSharedMem*)mapping.Base(); }
-	HWiNFO_SENSORS_SENSOR_ELEMENT& sE(int i) const { return *(PHWiNFO_SENSORS_SENSOR_ELEMENT)(mapping.Base() + hwi().dwOffsetOfSensorSection + hwi().dwSizeOfSensorElement * i); }
-	HWiNFO_SENSORS_READING_ELEMENT& rE(int i) const { return *(PHWiNFO_SENSORS_READING_ELEMENT)(mapping.Base() + hwi().dwOffsetOfReadingSection + hwi().dwSizeOfReadingElement * i); }
+	auto& hwi() const { return *(const HWiNFO_SENSORS_SHARED_MEM2*)mapping.Base(); }
+	auto& sE(int i) const { return *(PHWiNFO_SENSORS_SENSOR_ELEMENT)(mapping.Base() + hwi().dwOffsetOfSensorSection + hwi().dwSizeOfSensorElement * i); }
+	auto& rE(int i) const { return *(PHWiNFO_SENSORS_READING_ELEMENT)(mapping.Base() + hwi().dwOffsetOfReadingSection + hwi().dwSizeOfReadingElement * i); }
 	Unit unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const;
 
 	DWORD origSensors = 0;
@@ -636,7 +634,7 @@ int HWiMonitor::enumerateSensors()
 	::OutputDebugString(L"HWiMonitor::enumerateSensors...");
 	// create a "sensorNameFromInstanceNumber"
 	auto computedSensorName = [](auto s) {
-		string raw_dev(s.szSensorNameUser);
+		const string raw_dev(s.szSensorNameUser);
 		wstring deviceName(cbegin(raw_dev), cend(raw_dev));
 		if (s.dwSensorInst > 0) {
 			wchar_t buf[8];
@@ -652,7 +650,7 @@ int HWiMonitor::enumerateSensors()
 		return 0; // nothing to see here...
 
 	origSensors = h.dwNumSensorElements, origReadings = h.dwNumReadingElements;
-	for (DWORD i = 0; i < h.dwNumReadingElements; ++i) {
+	for (decltype(h.dwNumReadingElements) i = 0; i < h.dwNumReadingElements; ++i) {
 		const auto& r = rE(i);
 		const auto u = unitFromReading(r);
 		if (u != None) {
@@ -662,7 +660,7 @@ int HWiMonitor::enumerateSensors()
 			pathSS << L'|' << r.szLabelUser;
 			if (r.szUnit[0])
 				pathSS << L' ' << r.szUnit;
-			wstring path(pathSS.str());
+			const wstring path(pathSS.str());
 			sensors.insert(path);
 			values[path] = i, units[path] = u;
 			::OutputDebugString(path.c_str());
