@@ -289,7 +289,7 @@ public:
 			s.push_back(fahrenheit ? L'F' : L'C');
 		return s;
 	}
-	wstring SensorValueString(const wstring& path, bool fahrenheit) const override {
+	constexpr wstring SensorValueString(const wstring& path, bool fahrenheit) const override {
 		const auto u = SensorUnit(path);
 		/*
 			# of fractional digits to display for above "universal" units
@@ -370,10 +370,8 @@ class ABMonitor : public MonitorCommonImpl<const float*>{
 	};
 #pragma pack(pop)
 
-	typedef MAHM_SHARED_MEMORY_HEADER AbSharedMem;
-
 	int enumerateSensors();
-	AbSharedMem& ab() const { return *(AbSharedMem*)mapping.Base(); }
+	auto& ab() const { return *(const MAHM_SHARED_MEMORY_HEADER*)mapping.Base(); }
 	MAHM_SHARED_MEMORY_ENTRY& rE(int i) const { return *(MAHM_SHARED_MEMORY_ENTRY*)(mapping.Base() + ab().dwHeaderSize + ab().dwEntrySize * i); }
 	MAHM_SHARED_MEMORY_GPU_ENTRY& gE(int i) const { return *(MAHM_SHARED_MEMORY_GPU_ENTRY*)(mapping.Base() + ab().dwHeaderSize + ab().dwEntrySize * ab().dwNumEntries + ab().dwGpuEntrySize * i); }
 	Unit unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const;
@@ -399,7 +397,7 @@ int ABMonitor::enumerateSensors()
 	if (a.dwSignature != 'MAHM')
 		return 0; // nothing to see here...
 
-	for (DWORD i = 0; i < a.dwNumEntries; ++i) {
+	for (decltype(a.dwNumEntries) i = 0; i < a.dwNumEntries; ++i) {
 		const auto& r = rE(i);
 		const auto u = unitFromRecord(r);
 		if (u != None) {
@@ -418,7 +416,7 @@ int ABMonitor::enumerateSensors()
 			} else
 				pathSS << L"pc";
 			pathSS << L'|' << r.szSrcName;
-			wstring path(pathSS.str());
+			const wstring path(pathSS.str());
 			sensors.insert(path);
 			values[path] = &r.data, units[path] = u;
 			::OutputDebugString(path.c_str());
@@ -502,11 +500,11 @@ int CTMonitor::enumerateSensors()
 			auto off = [c](auto i, auto j) { return c.uiCoreCnt * i + j; };
 			wstringstream pathSS;
 			pathSS << root << L'|' << L"CPU [#" << cpu << L"]: " << c.sCPUName << L'|' << L"Core #" << core;
-			wstring corePath(pathSS.str());
-			wstring tempPath(corePath + L" Temperature");
+			const wstring corePath(pathSS.str());
+			const wstring tempPath(corePath + L" Temperature");
 			sensors.insert(tempPath), values[tempPath] = c.fTemp + off(cpu, core), units[tempPath] = Degrees;
 			::OutputDebugString(tempPath.c_str());
-			wstring loadPath(corePath + L" Load");
+			const wstring loadPath(corePath + L" Load");
 			sensors.insert(loadPath), values[loadPath] = (value_type)(c.uiLoad + off(cpu, core)), units[loadPath] = UsagePerCent;
 			::OutputDebugString(loadPath.c_str());
 		}
@@ -543,7 +541,7 @@ class GPUZMonitor : public MonitorCommonImpl<const double*> {
 #pragma pack(pop)
 
 	int enumerateSensors();
-	GpuzSharedMem& gpuz() const { return *(GpuzSharedMem*)mapping.Base(); }
+	auto& gpuz() const { return *(const GpuzSharedMem*)mapping.Base(); }
 	Unit unitFromRecord(const SensorRecord& r) const;
 
 public:
@@ -564,7 +562,7 @@ int GPUZMonitor::enumerateSensors()
 	sensors.clear(), values.clear(), units.clear();
 	const auto& g = gpuz();
 
-	const auto&& device = find_if(cbegin(g.data), cend(g.data), [](const Record& r) {
+	const auto&& device = find_if(cbegin(g.data), cend(g.data), [](const auto& r) {
 		return wcscmp(r.key, L"CardName") == 0;
 	});
 	wstring deviceName = (device != cend(g.data)) ? device->val : L"<Graphics Card>";
@@ -576,7 +574,7 @@ int GPUZMonitor::enumerateSensors()
 		if (u != None) {
 			wstringstream pathSS;
 			pathSS << root << L'|' << deviceName << L'|' << s.name;
-			wstring path(pathSS.str());
+			const wstring path(pathSS.str());
 			sensors.insert(path);
 			values[path] = &s.value, units[path] = u;
 			::OutputDebugString(path.c_str());
@@ -744,8 +742,8 @@ class HWMonitor : public MonitorCommonImpl<const float*> {
 		float value;						// sensor val
 	} HWMSensor;
 
-	const HWMDevice& device(int d) const { return ((HWMDevice*)(mapping.Base() + sizeof HWMHdr))[d]; }
-	int deviceCount() const { return mapping.Base() ? ((HWMHdr*)mapping.Base())->deviceNum : 0; }
+	const auto& device(int d) const { return ((const HWMDevice*)(mapping.Base() + sizeof HWMHdr))[d]; }
+	int deviceCount() const { return mapping.Base() ? ((const HWMHdr*)mapping.Base())->deviceNum : 0; }
 	const char* deviceDescription(int d) const { return (mapping.Base() && d < deviceCount()) ? device(d).description : "" ; }
 	int enumerateSensors();
 	const wchar_t* groupType(int g) const {
@@ -760,7 +758,7 @@ class HWMonitor : public MonitorCommonImpl<const float*> {
 		};
 		return (g < MaxGroups) ? sensorGroupTypes[g] : L"";
 	}
-	const HWMSensor& node(int d, int g, int s) const { return ((HWMSensor*)(mapping.Base() + device(d).map[g].nodePtr))[s]; }
+	const auto& node(int d, int g, int s) const { return ((const HWMSensor*)(mapping.Base() + device(d).map[g].nodePtr))[s]; }
 	int sensorCount(int d, int g) const { return (mapping.Base() && d < deviceCount() && g < MaxGroups) ? device(d).map[g].nodeNum : 0; }
 	const char* sensorLabel(int d, int g, int s) const { return (mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g)) ? node(d, g, s).name : ""; }
 	Unit unitFromDGS(int d, int g, int s) const;
@@ -779,7 +777,7 @@ public:
 
 int HWMonitor::enumerateSensors()
 {
-	auto dgs = [](int d, int g, int s) {
+	auto dgs = [](auto d, auto g, auto s) {
 		wchar_t buf[16];
 		return
 			wstring(_itow(d, buf, 10)) + L',' +
@@ -791,8 +789,8 @@ int HWMonitor::enumerateSensors()
 	sensors.clear(), values.clear(), units.clear();
 
 	for (int d = 0; d < deviceCount(); ++d) {
-		string raw_dev(deviceDescription(d));
-		wstring deviceName(cbegin(raw_dev), cend(raw_dev));
+		const string raw_dev(deviceDescription(d));
+		const wstring deviceName(cbegin(raw_dev), cend(raw_dev));
 		devices.insert(deviceName);
 		auto dupes = devices.count(deviceName);
 		for (int g = 0; g < MaxGroups; ++g)
@@ -803,7 +801,7 @@ int HWMonitor::enumerateSensors()
 					pathSS << " #" << dupes;
 				// N.B. - ONLY CPUID Hardware Monitor needs this "extra" level
 				pathSS << L'|' << groupType(g) << L'|' << sensorLabel(d, g, s);
-				wstring path(pathSS.str());
+				const wstring path(pathSS.str());
 				sensors.insert(path);
 				values[path] = &node(d, g, s).value;
 				units[path] = unitFromDGS(d, g, s);
@@ -873,7 +871,7 @@ class SFMonitor : public MonitorCommonImpl<const int*> {
 
 	int enumerateSensors();
 	wstring SFMonitor::getExecutableDir(const wstring& exeToFind);
-	SfSharedMem& sf() const { return *(SfSharedMem*)mapping.Base(); }
+	auto& sf() const { return *(const SfSharedMem*)mapping.Base(); }
 
 public:
 	SFMonitor(wstring root, wstring displayName) : MonitorCommonImpl(root, displayName) {}
@@ -893,7 +891,7 @@ int SFMonitor::enumerateSensors()
 {
 	::OutputDebugString(L"SFMonitor::enumerateSensors...");
 	sensors.clear(), values.clear(), units.clear();
-	wstring sfPath = getExecutableDir(speedFanExecutable);
+	const wstring sfPath = getExecutableDir(speedFanExecutable);
 	if (sfPath.empty())
 		return 0;	// we're outta here
 	wifstream config(sfPath + speedFanConfig);
@@ -1235,18 +1233,18 @@ static void renderBackground(RXM* rxm)
 {
 	auto bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
 	Graphics g(bm.get());
-	auto drawGrid = [&](Color argb) {
+	auto drawGrid = [&](auto argb) {
 		Pen p(argb);
 		for (int x = 16; x < 128; x += 16)
 			g.DrawLine(&p, x - 0.5f, -0.5f, x - 0.5f, 127.5f);
 		for (int y = 16; y < 128; y += 16)
 			g.DrawLine(&p, -0.5f, y - 0.5f, 127.5f, y - 0.5f);
 	};
-	auto drawRect = [&](Color argb) {
+	auto drawRect = [&](auto argb) {
 		Pen p(argb);
 		g.DrawRectangle(&p, 0, 0, 127, 127);
 	};
-	auto fillRect = [&](Color argb) {
+	auto fillRect = [&](auto argb) {
 		SolidBrush b(argb);
 		g.FillRectangle(&b, 0, 0, 128, 128);
 	};
@@ -1320,7 +1318,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	auto rendered = 0;
 
 	// workhorse lambda for matching click to sensor
-	auto matchRectF = [&](const POINT& pt, const SIZE& sz) {
+	auto matchRectF = [&](const auto& pt, const auto& sz) {
 		const auto cx = (REAL)sz.cx / 128;
 		const auto cy = (REAL)sz.cy / 128;
 		remove_const<decltype(zones)>::type z;
@@ -1333,8 +1331,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 			for (auto i = 0; i < 4; ++i)
 				if (z[i].Contains(x, y))
 					return pt.x < z[i].Width / 2 ? i : i + 4;
-		}
-		else
+		} else
 			for (auto i = 4; i < 6; ++i)
 				if (z[i].Contains(x, y))
 					return i == 4 ? 0 : 1;
@@ -1626,7 +1623,7 @@ void RXMConfigure::DoDataExchange(CDataExchange* pDX)
 
 void RXMConfigure::assignColor(int sensor)
 {
-	RXM::Layout& l = rxm->layout[rxm->page][sensor];
+	auto& l = rxm->layout[rxm->page][sensor];
 	if (!l.Active())
 		return;	// nothing to do
 
@@ -1637,13 +1634,13 @@ void RXMConfigure::assignColor(int sensor)
 void RXMConfigure::assignSensor(int sensor)
 {
 	// set this sensor's corresponding hardware sensor...
-	HTREEITEM h = SensorTree.GetSelectedItem();
+	auto h = SensorTree.GetSelectedItem();
 	if (h == nullptr || SensorTree.ItemHasChildren(h))
 		return;	// we're outta here
 
 	// ... from the displayed sensor tree
-	wstring path = pathFromTree[h];
-	wstring elidedPath = head(path) + L'\u2026' + tail(path);
+	const wstring path = pathFromTree[h];
+	const wstring elidedPath = head(path) + L'\u2026' + tail(path);
 	((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(elidedPath.c_str());
 	rxm->layout[rxm->page][sensor].Assign(path, ((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->GetColor());
 	renderPage(rxm);
@@ -1657,7 +1654,7 @@ void RXMConfigure::initializeBackgroundList()
 		L"White", L"White with Border", L"White with Grid",
 		L"Yellow", L"Yellow with Border", L"Yellow with Grid"
 	};
-	CComboBox* cb = (CComboBox*)GetDlgItem(IDC_BACKGROUND);
+	auto* cb = (CComboBox*)GetDlgItem(IDC_BACKGROUND);
 	cb->SetRedraw(FALSE);
 	for (const auto& t : b)
 		cb->AddString(t);
@@ -1719,12 +1716,12 @@ void RXMConfigure::initializeSensorTree()
 void RXMConfigure::locateSensor(int sensor)
 {
 	// set this sensor's corresponding hardware tree location...
-	RXM::Layout& l = rxm->layout[rxm->page][sensor];
+	auto& l = rxm->layout[rxm->page][sensor];
 	if (!l.Active() || !l.Live(rxm))
 		return;	// we're outta here
 
 	// ... from the assigned sensor path (also set focus)
-	const HTREEITEM h = treeFromPath[l.path];
+	const auto h = treeFromPath[l.path];
 	SensorTree.SetFocus();
 	SensorTree.EnsureVisible(h);
 	SensorTree.SelectItem(h);
@@ -1798,7 +1795,7 @@ void RXMConfigure::OnBnClickedSavelocal()
 {
 	char pathN[MAX_PATH];
 	DockletGetRelativeFolder(rxm->hwndDocklet, pathN);
-	string path(pathN);
+	const string path(pathN);
 	saveProfile(rxm, "Docklets\\Defaults.ini", path + "RXMDocklet.dll", true);
 }
 
@@ -1851,8 +1848,8 @@ void RXMConfigure::OnTcnSelchangeSensorTab(NMHDR *pNMHDR, LRESULT *pResult)
 
 void RXMConfigure::OnTvnGetInfoTipSensorTree(NMHDR *pNMHDR, LRESULT *pResult)
 {
-	LPNMTVGETINFOTIP pGetInfoTip = reinterpret_cast<LPNMTVGETINFOTIP>(pNMHDR);
-	HTREEITEM h = pGetInfoTip->hItem;
+	auto pGetInfoTip = reinterpret_cast<LPNMTVGETINFOTIP>(pNMHDR);
+	auto h = pGetInfoTip->hItem;
 	// (make sure we are dealing with a LEAF)
 	if (!SensorTree.ItemHasChildren(h)) {
 		const wstring& path = pathFromTree[h];
