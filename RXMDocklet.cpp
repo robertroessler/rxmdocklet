@@ -32,6 +32,7 @@
 #include <mutex>
 #include <thread>
 #include <string>
+#include <string_view>
 #include <sstream>
 #include <fstream>
 #include <iomanip>
@@ -74,7 +75,25 @@ template <typename T, std::size_t N>
 constexpr decltype(auto) decayed_end(T(&c)[N])
 NOEXCEPT_RETURN(reinterpret_cast<typename std::remove_all_extents<T>::type*>(c + N))
 
-using namespace std;
+/*
+	Define "alias templates" so as to use c++14 "is_transparent" comparators.
+*/
+
+template<typename T, typename Cmp = std::less<>>
+using set = std::set<T, Cmp>;
+
+template<typename K, typename T, typename Cmp = std::less<>>
+using map = std::map<K, T, Cmp>;
+
+using std::vector;
+using std::string;
+using std::wstring;
+using std::string_view;
+using std::wstring_view;
+using std::wstringstream;
+using std::begin, std::end, std::cbegin, std::cend;
+using std::make_unique;
+using std::copy;
 
 /*
 	The rxm namespace contains all primary and supporting logic for
@@ -153,8 +172,8 @@ public:
 		return true;
 	}
 
-	LPBYTE Base() const { return vB; }
-	size_t Size() const { return vN; }
+	constexpr LPBYTE Base() const { return vB; }
+	constexpr size_t Size() const { return vN; }
 };
 
 /*
@@ -184,21 +203,21 @@ enum Unit {
 /*
 	utility functions for accessing [sensor] path components
 */
-static wstring head(const wstring& path)
+constexpr wstring_view head(wstring_view path)
 {
 	const auto i = path.find_first_of('|');
-	return (i != wstring::npos) ? path.substr(0, i) : L"";
+	return i != wstring::npos ? path.substr(0, i) : L"";
 }
 
-static wstring tail(const wstring& path)
+constexpr wstring_view tail(wstring_view path)
 {
 	const auto i = path.find_last_of('|');
-	return (i != wstring::npos) ? path.substr(i + 1) : L"";
+	return i != wstring::npos ? path.substr(i + 1) : L"";
 }
 
-static vector<wstring> split(const wstring& text, const wregex& sep)
+static vector<wstring> split(const wstring& text, const std::wregex& sep)
 {
-	wsregex_token_iterator first(cbegin(text), cend(text), sep, -1), last;
+	std::wsregex_token_iterator first(cbegin(text), cend(text), sep, -1), last;
 	return { first, last };
 }
 
@@ -213,10 +232,10 @@ public:
 	virtual bool Refresh() = 0;
 	virtual bool RefreshNeeded() const = 0;
 	virtual const sensor_enumeration_t& Sensors() const = 0;
-	virtual Unit SensorUnit(const wstring& path) const = 0;
-	virtual wstring SensorUnitString(const wstring& path, bool fahrenheit = false) const = 0;
-	virtual float SensorValue(const wstring& path, bool fahrenheit = false) const = 0;
-	virtual wstring SensorValueString(const wstring& path, bool fahrenheit = false) const = 0;
+	virtual Unit SensorUnit(wstring_view path) const = 0;
+	virtual wstring SensorUnitString(wstring_view path, bool fahrenheit = false) const = 0;
+	virtual float SensorValue(wstring_view path, bool fahrenheit = false) const = 0;
+	virtual wstring SensorValueString(wstring_view path, bool fahrenheit = false) const = 0;
 };
 
 /*
@@ -239,24 +258,24 @@ protected:
 	constexpr double c2f(double d) const { return floor((d * 9 / 5 + 32) + 0.5); }
 	template<class SynchronizedInit>
 	bool refreshImpl(SynchronizedInit f) {
-		lock_guard<RSpinLock> acquire(lock);
+		std::lock_guard<RSpinLock> acquire(lock);
 		return f();
 	}
 	template<class RawValueAccess>
-	float sensorValueImpl(const wstring& path, bool fahrenheit, RawValueAccess f) const {
+	float sensorValueImpl(wstring_view path, bool fahrenheit, RawValueAccess f) const {
 		float ret = 0;
-		lock_guard<RSpinLock> acquire(const_cast<RSpinLock&>(lock));
+		std::lock_guard<RSpinLock> acquire(const_cast<RSpinLock&>(lock));
 		const auto&& v = values.find(path);
 		const auto&& u = units.find(path);
 		if (v == cend(values) || u == cend(units))
-			ret = numeric_limits<float>::infinity();	// sensor not present
+			ret = std::numeric_limits<float>::infinity();	// sensor not present
 		else try {
 			double d = f(v->second, u->second);
 			if (u->second == Degrees && fahrenheit)
 				d = c2f(d);
 			ret = (float)d;
 		} catch (...) {
-			ret = numeric_limits<float>::infinity();	// sensor not present
+			ret = std::numeric_limits<float>::infinity();	// sensor not present
 		}
 		return ret;
 	}
@@ -265,11 +284,11 @@ public:
 	constexpr wstring DisplayName() const override { return displayName; }
 	constexpr bool RefreshNeeded() const override { return false; }
 	const sensor_enumeration_t& Sensors() const override { return sensors; }
-	constexpr Unit SensorUnit(const wstring& path) const override {
+	constexpr Unit SensorUnit(wstring_view path) const override {
 		const auto&& u = units.find(path);
-		return (u != cend(units)) ? u->second : None;
+		return u != cend(units) ? u->second : None;
 	}
-	constexpr wstring SensorUnitString(const wstring& path, bool fahrenheit) const override {
+	constexpr wstring SensorUnitString(wstring_view path, bool fahrenheit) const override {
 		const auto u = SensorUnit(path);
 		/*
 			display representation for above "universal" units
@@ -277,7 +296,7 @@ public:
 			N.B. - Unit enums will be used as indices into this array, so
 			make SURE they are kept in sync!
 		*/
-		static const wchar_t* unitString[]{
+		constexpr wchar_t* unitString[]{
 			L"None",
 			L"V", L"\u00b0", L"rpm", L"A", L"W", L"MHz", L"%",
 			L"MB", L"MB/s", L"", L"GT/s", L"T", L"x", L"KB/s",
@@ -289,7 +308,7 @@ public:
 			s.push_back(fahrenheit ? L'F' : L'C');
 		return s;
 	}
-	constexpr wstring SensorValueString(const wstring& path, bool fahrenheit) const override {
+	constexpr wstring SensorValueString(wstring_view path, bool fahrenheit) const override {
 		const auto u = SensorUnit(path);
 		/*
 			# of fractional digits to display for above "universal" units
@@ -297,7 +316,7 @@ public:
 			N.B. - Unit enums will be used as indices into this array, so
 			make SURE they are kept in sync!
 		*/
-		static const int displayFractional[]{
+		constexpr int displayFractional[]{
 			0,
 			3, 0, 0, 3, 3, 1, 1,
 			0, 3, 0, 1, 0, 0, 3,
@@ -383,7 +402,7 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create(L"MAHMSharedMemory") && enumerateSensors() > 0; });
 	}
-	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
+	float SensorValue(wstring_view path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
 	}
 };
@@ -476,7 +495,7 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create(L"CoreTempMappingObjectEx") && enumerateSensors() > 0; });
 	}
-	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
+	float SensorValue(wstring_view path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) {
 			const auto& c = ct();
 			return u == Degrees ?
@@ -498,7 +517,7 @@ int CTMonitor::enumerateSensors()
 	for (decltype(c.uiCPUCnt) cpu = 0; cpu < c.uiCPUCnt; ++cpu)
 		for (decltype(c.uiCoreCnt) core = 0; core < c.uiCoreCnt; ++core) {
 			auto off = [c](auto i, auto j) { return c.uiCoreCnt * i + j; };
-			wstringstream pathSS;
+			std::wstringstream pathSS;
 			pathSS << root << L'|' << L"CPU [#" << cpu << L"]: " << c.sCPUName << L'|' << L"Core #" << core;
 			const wstring corePath(pathSS.str());
 			const wstring tempPath(corePath + L" Temperature");
@@ -551,7 +570,7 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create(L"GPUZShMem") && enumerateSensors() > 0; });
 	}
-	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
+	float SensorValue(wstring_view path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
 	}
 };
@@ -562,7 +581,7 @@ int GPUZMonitor::enumerateSensors()
 	sensors.clear(), values.clear(), units.clear();
 	const auto& g = gpuz();
 
-	const auto&& device = find_if(cbegin(g.data), cend(g.data), [](const auto& r) {
+	const auto&& device = std::find_if(cbegin(g.data), cend(g.data), [](const auto& r) {
 		return wcscmp(r.key, L"CardName") == 0;
 	});
 	wstring deviceName = (device != cend(g.data)) ? device->val : L"<Graphics Card>";
@@ -742,10 +761,10 @@ class HWMonitor : public MonitorCommonImpl<const float*> {
 
 	const auto& device(int d) const { return ((const HWMDevice*)(mapping.Base() + sizeof HWMHdr))[d]; }
 	int deviceCount() const { return mapping.Base() ? ((const HWMHdr*)mapping.Base())->deviceNum : 0; }
-	const char* deviceDescription(int d) const { return (mapping.Base() && d < deviceCount()) ? device(d).description : "" ; }
+	const char* deviceDescription(int d) const { return mapping.Base() && d < deviceCount() ? device(d).description : "" ; }
 	int enumerateSensors();
 	const wchar_t* groupType(int g) const {
-		static wchar_t* sensorGroupTypes[MaxGroups] {
+		constexpr wchar_t* sensorGroupTypes[MaxGroups] {
 			L"<voltages>",
 			L"<temperatures>",
 			L"<fans>",
@@ -754,11 +773,11 @@ class HWMonitor : public MonitorCommonImpl<const float*> {
 			L"<powers>",
 			L"xxx", L"xxx", L"xxx", L"xxx"
 		};
-		return (g < MaxGroups) ? sensorGroupTypes[g] : L"";
+		return g < MaxGroups ? sensorGroupTypes[g] : L"";
 	}
 	const auto& node(int d, int g, int s) const { return ((const HWMSensor*)(mapping.Base() + device(d).map[g].nodePtr))[s]; }
-	int sensorCount(int d, int g) const { return (mapping.Base() && d < deviceCount() && g < MaxGroups) ? device(d).map[g].nodeNum : 0; }
-	const char* sensorLabel(int d, int g, int s) const { return (mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g)) ? node(d, g, s).name : ""; }
+	int sensorCount(int d, int g) const { return mapping.Base() && d < deviceCount() && g < MaxGroups ? device(d).map[g].nodeNum : 0; }
+	const char* sensorLabel(int d, int g, int s) const { return mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g) ? node(d, g, s).name : ""; }
 	Unit unitFromDGS(int d, int g, int s) const;
 
 public:
@@ -768,7 +787,7 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create(L"$CPUID$HWM$") && enumerateSensors() > 0; });
 	}
-	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
+	float SensorValue(wstring_view path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
 	}
 };
@@ -783,7 +802,7 @@ int HWMonitor::enumerateSensors()
 			wstring(_itow(s, buf, 10));
 	};
 	::OutputDebugString(L"HWMonitor::enumerateSensors...");
-	multiset<wstring> devices;
+	std::multiset<wstring> devices;
 	sensors.clear(), values.clear(), units.clear();
 
 	for (int d = 0; d < deviceCount(); ++d) {
@@ -811,8 +830,8 @@ int HWMonitor::enumerateSensors()
 }
 
 Unit HWMonitor::unitFromDGS(int d, int g, int s) const {
-	static Unit g2u[] { Volts, Degrees, RPM, RPM, Amps, Watts };
-	return (mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g)) ? g2u[g] : None;
+	constexpr Unit g2u[] { Volts, Degrees, RPM, RPM, Amps, Watts };
+	return mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g) ? g2u[g] : None;
 }
 
 /*
@@ -868,7 +887,7 @@ class SFMonitor : public MonitorCommonImpl<const int*> {
 	const int cfgEndTagN = wcslen(cfgEndTag);
 
 	int enumerateSensors();
-	wstring SFMonitor::getExecutableDir(const wstring& exeToFind);
+	wstring SFMonitor::getExecutableDir(wstring_view exeToFind);
 	auto& sf() const { return *(const SfSharedMem*)mapping.Base(); }
 
 public:
@@ -878,7 +897,7 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create(L"SFSharedMemory_ALM") && enumerateSensors() > 0; });
 	}
-	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
+	float SensorValue(wstring_view path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) {
 			return u != RPM ? (double)*i / 100 : (double)*i;
 		});
@@ -892,7 +911,7 @@ int SFMonitor::enumerateSensors()
 	const wstring sfPath = getExecutableDir(speedFanExecutable);
 	if (sfPath.empty())
 		return 0;	// we're outta here
-	wifstream config(sfPath + speedFanConfig);
+	std::wifstream config(sfPath + speedFanConfig);
 	if (!config.good())
 		return 0;	// we're outta here
 
@@ -983,7 +1002,7 @@ int SFMonitor::enumerateSensors()
 	for the supplied exe in the running processes list, and return the full
 	path of its FOLDER (including the trailing slash), or an empty string
 */
-wstring SFMonitor::getExecutableDir(const wstring& exeToFind)
+wstring SFMonitor::getExecutableDir(wstring_view exeToFind)
 {
 	// get all processes...
 	HANDLE sH = ::CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0);
@@ -1016,7 +1035,7 @@ wstring SFMonitor::getExecutableDir(const wstring& exeToFind)
 /*
 	type for mapping between IMonitor implementations and "root" names
 */
-typedef map<wstring, unique_ptr<IMonitor>> wstring_monitor_map_t;
+typedef map<wstring, std::unique_ptr<IMonitor>> wstring_monitor_map_t;
 }
 
 using namespace rxm;
@@ -1059,10 +1078,10 @@ struct RXM {
 
 		bool Active() const { return !path.empty(); }
 		void Assign(COLORREF c) { rgb = c; }
-		void Assign(const wstring& p, COLORREF c) { path = p, rgb = c; }
+		void Assign(wstring_view p, COLORREF c) { path = p, rgb = c; }
 		void Clear() { path.clear(), rgb = 0, last = -1; }
 		bool Live(RXM* rxm) const {
-			const auto m = rxm->monitor.find(head(path));
+			const auto&& m = rxm->monitor.find(head(path));
 			if (m == cend(rxm->monitor))
 				return false;
 			const auto& s = m->second.get()->Sensors();
@@ -1200,7 +1219,7 @@ static void initializeRXM(RXM* rxm, HWND hwndDocklet, HINSTANCE hInstance)
 	rxm->hwndDocklet = hwndDocklet, rxm->hInstance = hInstance;
 }
 
-static void loadProfile(RXM* rxm, const string& ini, const string& iniGroup)
+static void loadProfile(RXM* rxm, string_view ini, string_view iniGroup)
 {
 	wstring iniW(cbegin(ini), cend(ini)), iniGroupW(cbegin(iniGroup), cend(iniGroup));
 	// slurp in sensor, color, and temperature settings
@@ -1214,15 +1233,15 @@ static void loadProfile(RXM* rxm, const string& ini, const string& iniGroup)
 			}
 		}
 
-	const int j = ::GetPrivateProfileInt(iniGroupW.c_str(), L"Fahrenheit", 0, iniW.c_str());
+	const auto j = ::GetPrivateProfileInt(iniGroupW.c_str(), L"Fahrenheit", 0, iniW.c_str());
 	rxm->fahrenheit = (j == 0)? 0 : 1;
-	const int k = ::GetPrivateProfileInt(iniGroupW.c_str(), L"Background", 0, iniW.c_str());
+	const auto k = ::GetPrivateProfileInt(iniGroupW.c_str(), L"Background", 0, iniW.c_str());
 	rxm->image = __min(__max(k, 0), BackgroundImages-1);
 }
 
 static bool pageIsActive(RXM* rxm)
 {
-	return any_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [](auto l) {
+	return std::any_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [](auto l) {
 		return l.Active();
 	});
 }
@@ -1287,7 +1306,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		render != RenderType::EndFocus &&
 		render != RenderType::Forced &&
 		!rxm->Focused() &&
-		none_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [rxm](auto& l) {
+		std::none_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [rxm](auto& l) {
 			return l.UpdateRequired(rxm); }))
 		return; // (nothing to do)
 
@@ -1309,7 +1328,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 
 	// build rendering environment, part II...
 	auto& layouts = rxm->layout[rxm->page];
-	const auto n = count_if(cbegin(layouts), cend(layouts), [](auto& l) { return l.Active(); });
+	const auto n = std::count_if(cbegin(layouts), cend(layouts), [](auto& l) { return l.Active(); });
 	const auto n_effective = render == RenderType::StartFocus || rxm->Focused() ? 1 : n;
 	// (construct appropriate Font for below "dynamic" layout)
 	Gdiplus::Font f(L"Arial", n_effective > 2 ? 15e0F : 30e0F);
@@ -1319,7 +1338,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	auto matchRectF = [&](const auto& pt, const auto& sz) {
 		const auto cx = (REAL)sz.cx / 128;
 		const auto cy = (REAL)sz.cy / 128;
-		remove_const<decltype(zones)>::type z;
+		std::remove_const<decltype(zones)>::type z;
 		copy(begin(zones), end(zones), begin(z));
 		for (auto& r : z)
 			r.Width *= cx, r.Height *= cy;
@@ -1382,7 +1401,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	DockletSetImageOverlay(rxm->hwndDocklet, bm.release());
 }
 
-static void saveProfile(RXM* rxm, const string& ini, const string& iniGroup, bool asDefault = false)
+static void saveProfile(RXM* rxm, string_view ini, string_view iniGroup, bool asDefault = false)
 {
 	wstring iniW(cbegin(ini), cend(ini)), iniGroupW(cbegin(iniGroup), cend(iniGroup));
 	// handle "save local defaults" AS REQUIRED
@@ -1430,9 +1449,9 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 		DockletSetLabel(hwndDocklet, "Start a Monitor application!");
 
 	// load profile (if there is one)...
-	string ini(szIni ? szIni : ""), iniGroup(szIniGroup ? szIniGroup : "");
+	string_view ini(szIni ? szIni : ""), iniGroup(szIniGroup ? szIniGroup : "");
 	if (!ini.empty() && !iniGroup.empty())
-		loadProfile(rxm.get(), ini, szIniGroup);
+		loadProfile(rxm.get(), ini, iniGroup);
 	else if (!rxm->monitor.empty())
 		DockletSetLabel(hwndDocklet, "Configure Docklet!");
 	// ... and set background
@@ -1535,7 +1554,7 @@ BOOL CALLBACK OnRightButtonClick(RXM* rxm, POINT *ptCursor, SIZE *sizeDocklet)
 	case 1: {
 		// configure docklet
 		RXMConfigure cfg(rxm);
-		const int oldPage = rxm->page, oldFahrenheit = rxm->fahrenheit, oldImage = rxm->image;
+		const auto oldPage = rxm->page, oldFahrenheit = rxm->fahrenheit, oldImage = rxm->image;
 		decltype(rxm->layout) oldLayout;
 		copy(decayed_begin(rxm->layout), decayed_end(rxm->layout), decayed_begin(oldLayout));
 		if (cfg.DoModal() != IDOK) {
@@ -1637,8 +1656,8 @@ void RXMConfigure::assignSensor(int sensor)
 		return;	// we're outta here
 
 	// ... from the displayed sensor tree
-	const wstring path = pathFromTree[h];
-	const wstring elidedPath = head(path) + L'\u2026' + tail(path);
+	const auto& path = pathFromTree[h];
+	const auto elidedPath = wstring(head(path)) + L'\u2026' + wstring(tail(path));
 	((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(elidedPath.c_str());
 	rxm->layout[rxm->page][sensor].Assign(path, ((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->GetColor());
 	renderPage(rxm);
@@ -1646,7 +1665,7 @@ void RXMConfigure::assignSensor(int sensor)
 
 void RXMConfigure::initializeBackgroundList()
 {
-	static wchar_t* b[BackgroundImages] {
+	constexpr wchar_t* b[BackgroundImages] {
 		L"Black",
 		L"Clear", L"Clear with Border", L"Clear with Grid",
 		L"White", L"White with Border", L"White with Grid",
@@ -1662,12 +1681,12 @@ void RXMConfigure::initializeBackgroundList()
 void RXMConfigure::initializeSensors()
 {
 	for (auto& l : rxm->layout[rxm->page]) {
-		const auto sensor = distance(rxm->layout[rxm->page], &l);
+		const auto sensor = std::distance(rxm->layout[rxm->page], &l);
 		if (l.Active()) {
 			// display this sensor's color...
 			((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(l.rgb);
 			// ... and [somewhat descriptive] name
-			wstring elidedPath = head(l.path) + L'\u2026' + tail(l.path);
+			const auto elidedPath = wstring(head(l.path)) + L'\u2026' + wstring(tail(l.path));
 			((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(elidedPath.c_str());
 		} else {
 			// (nothing [much] to do)
@@ -1679,7 +1698,7 @@ void RXMConfigure::initializeSensors()
 
 void RXMConfigure::initializeSensorTree()
 {
-	static const wregex pathSeparator(L"\\|");
+	static const std::wregex pathSeparator(L"\\|");
 
 	// FOREACH specialized Monitor...
 	for (const auto& pair : rxm->monitor) {
@@ -1691,8 +1710,8 @@ void RXMConfigure::initializeSensorTree()
 		vector<HTREEITEM> treeHandle(n, nullptr);
 		// ... build the sensor tree from the [ordered] set of paths
 		for (const auto& s : sensors) {
-			auto path = split(s, pathSeparator);
-			for (int i = 0; i < n; ++i)
+			const auto path = split(s, pathSeparator);
+			for (auto i = 0; i < n; ++i)
 				if (path[i] != treeName[i])
 					if (i == 0)
 						treeHandle[0] = SensorTree.InsertItem(pair.second.get()->DisplayName().c_str(), TVI_ROOT),
@@ -1828,7 +1847,7 @@ BOOL RXMConfigure::OnInitDialog()
 
 	// "locate" 1st in-use sensor in tree
 	BOOL ret = TRUE;
-	const auto l = find_if(cbegin(rxm->layout[0]), cend(rxm->layout[0]), [](auto l) { return l.Active(); });
+	const auto l = std::find_if(cbegin(rxm->layout[0]), cend(rxm->layout[0]), [](auto l) { return l.Active(); });
 	if (l != cend(rxm->layout[0]))
 		locateSensor(l - cbegin(rxm->layout[0])), ret = FALSE;
 
@@ -1850,7 +1869,7 @@ void RXMConfigure::OnTvnGetInfoTipSensorTree(NMHDR *pNMHDR, LRESULT *pResult)
 	auto h = pGetInfoTip->hItem;
 	// (make sure we are dealing with a LEAF)
 	if (!SensorTree.ItemHasChildren(h)) {
-		const wstring& path = pathFromTree[h];
+		const auto& path = pathFromTree[h];
 		const auto m = rxm->FromPath(path);
 		const bool fahrenheit = CelsiusOrFahrenheit == 1;
 		wstring t = m->SensorValueString(path, fahrenheit);
