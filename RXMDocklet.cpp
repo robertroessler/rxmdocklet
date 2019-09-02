@@ -637,10 +637,10 @@ public:
 		const auto& h = hwi();
 		return h.dwNumSensorElements != origSensors || h.dwNumReadingElements != origReadings;
 	}
-	float SensorValue(const wstring& path, bool fahrenheit = false) const override {
+	float SensorValue(wstring_view path, bool fahrenheit = false) const override {
 		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) { return rE(i).Value; });
 	}
-	wstring SensorValueString(const wstring& path, bool fahrenheit = false) const override {
+	wstring SensorValueString(wstring_view path, bool fahrenheit = false) const override {
 		if (SensorUnit(path) == YorN)
 			return SensorValue(path) != 0 ? L"Yes" : L"No";
 		else
@@ -653,13 +653,10 @@ int HWiMonitor::enumerateSensors()
 	::OutputDebugString(L"HWiMonitor::enumerateSensors...");
 	// create a "sensorNameFromInstanceNumber"
 	auto computedSensorName = [](auto s) {
-		const string raw_dev(s.szSensorNameUser);
+		string_view raw_dev(s.szSensorNameUser);
 		wstring deviceName(cbegin(raw_dev), cend(raw_dev));
-		if (s.dwSensorInst > 0) {
-			wchar_t buf[8];
-			deviceName += L" #";
-			deviceName += _itow(s.dwSensorInst + 1, buf, 10);
-		}
+		if (s.dwSensorInst > 0)
+			deviceName += L" #" + std::to_wstring(s.dwSensorInst + 1);
 		return deviceName;
 	};
 	sensors.clear(), values.clear(), units.clear();
