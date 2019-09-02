@@ -657,7 +657,7 @@ int HWiMonitor::enumerateSensors()
 		string_view raw_dev(s.szSensorNameUser);
 		wstring deviceName(cbegin(raw_dev), cend(raw_dev));
 		if (s.dwSensorInst > 0)
-			deviceName += L" #" + std::to_wstring(s.dwSensorInst + 1);
+			deviceName += L" #" + to_wstring(s.dwSensorInst + 1);
 		return deviceName;
 	};
 	sensors.clear(), values.clear(), units.clear();
