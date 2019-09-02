@@ -1,7 +1,7 @@
 /*
 	RXMDocklet.cpp - "X" Monitor Docklet [DLL] implementation(s)
 
-	Copyright(c) 2009-2017, Robert Roessler
+	Copyright(c) 2009-2019, Robert Roessler
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -93,6 +93,7 @@ using std::wstringstream;
 using std::begin, std::end, std::cbegin, std::cend;
 using std::make_unique;
 using std::copy;
+using std::to_wstring;
 
 /*
 	The rxm namespace contains all primary and supporting logic for
@@ -683,11 +684,10 @@ public:
 int HWMonitor::enumerateSensors()
 {
 	auto dgs = [](auto d, auto g, auto s) {
-		wchar_t buf[16];
 		return
-			wstring(_itow(d, buf, 10)) + L',' +
-			wstring(_itow(g, buf, 10)) + L',' +
-			wstring(_itow(s, buf, 10));
+			to_wstring(d) + L',' +
+			to_wstring(g) + L',' +
+			to_wstring(s);
 	};
 	::OutputDebugString(L"HWMonitor::enumerateSensors...");
 	std::multiset<wstring> devices;
@@ -950,8 +950,8 @@ static inline Color COLORREF2Color(COLORREF cr)
 	of 8 values, with 2 columns of 4 on each page.
 */
 struct RXM {
-	HWND hwndDocklet;					// THIS docklet's HWND
-	HINSTANCE hInstance;				// docklet's DLL HINSTANCE
+	HWND hwndDocklet = nullptr;			// THIS docklet's HWND
+	HINSTANCE hInstance = nullptr;		// docklet's DLL HINSTANCE
 	int page = 0;						// current layout page
 	int timer = 0;						// Windows timer id
 	int image = 0;						// background selection
