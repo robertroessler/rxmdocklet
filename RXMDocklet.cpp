@@ -119,6 +119,8 @@ namespace rxm {
 	Definition and implementation of simple [threading-aware] spinlock
 */
 class RSpinLock {
+	std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
+
 public:
 	inline void lock() {
 		// try simple lock...
@@ -127,9 +129,6 @@ public:
 			std::this_thread::yield();
 	}
 	inline void unlock() { lock_.clear(std::memory_order_release); }
-
-private:
-	std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
 };
 
 /*
@@ -204,6 +203,7 @@ enum Unit {
 /*
 	utility functions for accessing [sensor] path components
 */
+
 constexpr wstring_view head(wstring_view path)
 {
 	const auto i = path.find_first_of('|');
@@ -259,13 +259,13 @@ protected:
 	constexpr double c2f(double d) const { return floor((d * 9 / 5 + 32) + 0.5); }
 	template<class SynchronizedInit>
 	bool refreshImpl(SynchronizedInit f) {
-		std::lock_guard<RSpinLock> acquire(lock);
+		std::lock_guard acquire(lock);
 		return f();
 	}
 	template<class RawValueAccess>
 	float sensorValueImpl(wstring_view path, bool fahrenheit, RawValueAccess f) const {
 		float ret = 0;
-		std::lock_guard<RSpinLock> acquire(const_cast<RSpinLock&>(lock));
+		std::lock_guard acquire(const_cast<RSpinLock&>(lock));
 		const auto&& v = values.find(path);
 		const auto&& u = units.find(path);
 		if (v == cend(values) || u == cend(units))
@@ -339,7 +339,7 @@ public:
 			else if (v >= 10)
 				w = 2;
 		wchar_t b[16];
-		swprintf(b, 16, L"%.*f", w, v);
+		swprintf(b, std::size(b), L"%.*f", w, v);
 		return b;
 	}
 };
@@ -347,7 +347,7 @@ public:
 /*
 	Implementation of IMonitor for MSI Afterburner
 */
-class ABMonitor : public MonitorCommonImpl<const float*>{
+class ABMonitor : public MonitorCommonImpl<const float*> {
 
 #pragma pack(push, 1)
 	struct MAHM_SHARED_MEMORY_HEADER {
@@ -419,8 +419,7 @@ int ABMonitor::enumerateSensors()
 
 	for (decltype(a.dwNumEntries) i = 0; i < a.dwNumEntries; ++i) {
 		const auto& r = rE(i);
-		const auto u = unitFromRecord(r);
-		if (u != None) {
+		if (const auto u = unitFromRecord(r); u != None) {
 			wstringstream pathSS;
 			pathSS << root << L'|';
 			if (r.dwSrcId != 0xffffffff && r.dwSrcId < 0x80) {
@@ -590,8 +589,7 @@ int GPUZMonitor::enumerateSensors()
 	for (const auto& s : g.sensors) {
 		if (s.name[0] == L'\0')
 			break;	// nothing more to examine
-		const auto u = unitFromRecord(s);
-		if (u != None) {
+		if (const auto u = unitFromRecord(s); u != None) {
 			wstringstream pathSS;
 			pathSS << root << L'|' << deviceName << L'|' << s.name;
 			const wstring path(pathSS.str());
@@ -802,13 +800,13 @@ int HWMonitor::enumerateSensors()
 	std::multiset<wstring> devices;
 	sensors.clear(), values.clear(), units.clear();
 
-	for (int d = 0; d < deviceCount(); ++d) {
+	for (auto d = 0; d < deviceCount(); ++d) {
 		const string raw_dev(deviceDescription(d));
 		const wstring deviceName(cbegin(raw_dev), cend(raw_dev));
 		devices.insert(deviceName);
 		auto dupes = devices.count(deviceName);
-		for (int g = 0; g < MaxGroups; ++g)
-			for (int s = 0; s < sensorCount(d, g); ++s) {
+		for (auto g = 0; g < MaxGroups; ++g)
+			for (auto s = 0; s < sensorCount(d, g); ++s) {
 				wstringstream pathSS;
 				pathSS << root << L'|' << deviceName;
 				if (dupes > 1)
@@ -1002,23 +1000,22 @@ int SFMonitor::enumerateSensors()
 wstring SFMonitor::getExecutableDir(wstring_view exeToFind)
 {
 	// get all processes...
-	HANDLE sH = ::CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0);
+	auto sH = ::CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0);
 	if (sH == INVALID_HANDLE_VALUE)
 		return L"";	// we're outta here
 
 					// ... and see if SpeedFan is running
 	wstring exePath;
 	PROCESSENTRY32 pe { sizeof PROCESSENTRY32 };
-	for (BOOL status = ::Process32First(sH, &pe); status; status = ::Process32Next(sH, &pe)) {
+	for (auto status = ::Process32First(sH, &pe); status; status = ::Process32Next(sH, &pe)) {
 		wstring exe = pe.szExeFile;
 		transform(cbegin(exe), cend(exe), begin(exe), ::tolower);
 		if (exe.find(exeToFind) != wstring::npos) {
-			wchar_t fullExe[MAX_PATH];
-			DWORD nchars = MAX_PATH;
-			HANDLE pH = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
-			if (pH != nullptr) {
+			if (auto pH = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID); pH != nullptr) {
+				wchar_t fullExe[MAX_PATH];
+				DWORD nchars = MAX_PATH;
 				if (::QueryFullProcessImageName(pH, 0, fullExe, &nchars))
-					exePath = wstring(fullExe, nchars - exeToFind.length());
+					exePath = wstring(fullExe, nchars - exeToFind.size());
 				::CloseHandle(pH);
 			}
 			break;
@@ -1121,10 +1118,6 @@ class RXMConfigure : public CDialogEx
 	map<HTREEITEM, sensor_t> pathFromTree;
 	map<sensor_t, HTREEITEM> treeFromPath;
 
-	const int assignControlID[LayoutsPerPage] {
-		IDC_ASSIGN1, IDC_ASSIGN2, IDC_ASSIGN3, IDC_ASSIGN4,
-		IDC_ASSIGN5, IDC_ASSIGN6, IDC_ASSIGN7, IDC_ASSIGN8
-	};
 	const int colorControlID[LayoutsPerPage] {
 		IDC_COLOR1, IDC_COLOR2, IDC_COLOR3, IDC_COLOR4,
 		IDC_COLOR5, IDC_COLOR6, IDC_COLOR7, IDC_COLOR8
@@ -1132,10 +1125,6 @@ class RXMConfigure : public CDialogEx
 	const int editControlID[LayoutsPerPage] {
 		IDC_SENSOR1, IDC_SENSOR2, IDC_SENSOR3, IDC_SENSOR4,
 		IDC_SENSOR5, IDC_SENSOR6, IDC_SENSOR7, IDC_SENSOR8
-	};
-	const int locateControlID[LayoutsPerPage] {
-		IDC_LOCATE1, IDC_LOCATE2, IDC_LOCATE3, IDC_LOCATE4,
-		IDC_LOCATE5, IDC_LOCATE6, IDC_LOCATE7, IDC_LOCATE8
 	};
 
 	void assignSensor(int sensor);
@@ -1220,18 +1209,18 @@ static void loadProfile(RXM* rxm, string_view ini, string_view iniGroup)
 {
 	wstring iniW(cbegin(ini), cend(ini)), iniGroupW(cbegin(iniGroup), cend(iniGroup));
 	// slurp in sensor, color, and temperature settings
-	for (int p = 0; p < Pages; ++p)
-		for (int s = 0; s < LayoutsPerPage; ++s) {
+	for (auto p = 0; p < Pages; ++p)
+		for (auto s = 0; s < LayoutsPerPage; ++s) {
 			wchar_t k1[16], k2[16], b[MAX_PATH];
-			swprintf(k1, 16, L"Sensor%d-%d", p + 1, s + 1);
+			swprintf(k1, std::size(k1), L"Sensor%d-%d", p + 1, s + 1);
 			if (::GetPrivateProfileString(iniGroupW.c_str(), k1, L"", b, MAX_PATH, iniW.c_str())) {
-				swprintf(k2, 16, L"Color%d-%d", p + 1, s + 1);
+				swprintf(k2, std::size(k2), L"Color%d-%d", p + 1, s + 1);
 				rxm->layout[p][s].Assign(b, ::GetPrivateProfileInt(iniGroupW.c_str(), k2, 0, iniW.c_str()));
 			}
 		}
 
 	const auto j = ::GetPrivateProfileInt(iniGroupW.c_str(), L"Fahrenheit", 0, iniW.c_str());
-	rxm->fahrenheit = (j == 0)? 0 : 1;
+	rxm->fahrenheit = j == 0 ? 0 : 1;
 	const auto k = ::GetPrivateProfileInt(iniGroupW.c_str(), L"Background", 0, iniW.c_str());
 	rxm->image = __min(__max(k, 0), BackgroundImages-1);
 }
@@ -1249,9 +1238,9 @@ static void renderBackground(RXM* rxm)
 	Graphics g(bm.get());
 	auto drawGrid = [&](auto argb) {
 		Pen p(argb);
-		for (int x = 16; x < 128; x += 16)
+		for (auto x = 16; x < 128; x += 16)
 			g.DrawLine(&p, x - 0.5f, -0.5f, x - 0.5f, 127.5f);
-		for (int y = 16; y < 128; y += 16)
+		for (auto y = 16; y < 128; y += 16)
 			g.DrawLine(&p, -0.5f, y - 0.5f, 127.5f, y - 0.5f);
 	};
 	auto drawRect = [&](auto argb) {
@@ -1352,6 +1341,14 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		return -1; // (indicate NO match found)
 	};
 
+	// check for (and handle) render state machine state changes (II)
+	if (render == RenderType::StartFocus) {
+		const auto i = matchRectF(*pt, *sz);
+		if (i < 0 || !(layouts[i].Active() && layouts[i].Live(rxm)))
+			return; // (treat failed and/or useless match as a no-op)
+		rxm->StartFocus(i, 5);
+	}
+
 	// workhorse lambda for "dynamic" layout based on # of active Layouts in the page...
 	auto doSingleLayout = [&](auto& l, auto n) {
 		switch (n) {
@@ -1376,14 +1373,6 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		}
 	};
 
-	// check for (and handle) render state machine state changes (II)
-	if (render == RenderType::StartFocus) {
-		const auto i = matchRectF(*pt, *sz);
-		if (i < 0 || !(layouts[i].Active() && layouts[i].Live(rxm)))
-			return; // (treat failed and/or useless match as a no-op)
-		rxm->StartFocus(i, 5);
-	}
-
 	if (rxm->Focused()) {
 		// for single "focused" layout
 		auto& l = layouts[rxm->Focus()];
@@ -1405,12 +1394,12 @@ static void saveProfile(RXM* rxm, string_view ini, string_view iniGroup, bool as
 	if (asDefault)
 		WritePrivateProfileInt(iniGroupW.c_str(), L"ForceDockletDefaults", 1, iniW.c_str());
 	// stash sensor, color, and temperature settings
-	for (int p = 0; p < Pages; ++p)
-		for (int s = 0; s < LayoutsPerPage; ++s) {
+	for (auto p = 0; p < Pages; ++p)
+		for (auto s = 0; s < LayoutsPerPage; ++s) {
 			RXM::Layout& l = rxm->layout[p][s];
 			wchar_t k1[16], k2[16];
-			swprintf(k1, 16, L"Sensor%d-%d", p + 1, s + 1);
-			swprintf(k2, 16, L"Color%d-%d", p + 1, s + 1);
+			swprintf(k1, std::size(k1), L"Sensor%d-%d", p + 1, s + 1);
+			swprintf(k2, std::size(k2), L"Color%d-%d", p + 1, s + 1);
 			if (l.Active()) {
 				::WritePrivateProfileString(iniGroupW.c_str(), k1, l.path.c_str(), iniW.c_str());
 				WritePrivateProfileInt(iniGroupW.c_str(), k2, l.rgb, iniW.c_str());
@@ -1439,8 +1428,8 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 	rxm->monitor.emplace(L"HWM", make_unique<HWMonitor>(L"HWM", L"HWMonitor"));
 	rxm->monitor.emplace(L"SF", make_unique<SFMonitor>(L"SF", L"SpeedFan"));
 	// ... and initialize the ones that are [initially] present
-	for (auto& m : rxm->monitor)
-		m.second->Refresh();
+	for (auto& [_, m] : rxm->monitor)
+		m->Refresh();
 
 	if (rxm->monitor.empty())
 		DockletSetLabel(hwndDocklet, "Start a Monitor application!");
@@ -1499,8 +1488,8 @@ BOOL CALLBACK OnLeftButtonClick(RXM* rxm, POINT *pt, SIZE *sz)
 	else {
 		// show "next" page of sensors (N.B. - "Pages" must be a power of 2)
 		// (click moves "forward" in set of pages, shift-click moves "back")
-		const int delta = ::GetAsyncKeyState(VK_SHIFT) < 0 ? -1 : 1;
-		const int i = rxm->page;
+		const auto delta = ::GetAsyncKeyState(VK_SHIFT) < 0 ? -1 : 1;
+		const auto i = rxm->page;
 		do
 			rxm->page = (rxm->page + delta) & (Pages - 1);
 		while (!pageIsActive(rxm) && rxm->page != i);
@@ -1523,8 +1512,8 @@ void CALLBACK OnProcessMessage(RXM* rxm, HWND hwnd, UINT uMsg, WPARAM wParam, LP
 	// WM_POWERBROADCAST: on resume, re-enumerate sensors AS REQUIRED
 	case WM_POWERBROADCAST:
 		if (wParam == PBT_APMRESUMEAUTOMATIC)
-			for (auto& m : rxm->monitor)
-				m.second->Refresh();
+			for (auto& [_, m] : rxm->monitor)
+				m->Refresh();
 		break;
 	}
 }
@@ -1570,8 +1559,8 @@ BOOL CALLBACK OnRightButtonClick(RXM* rxm, POINT *ptCursor, SIZE *sizeDocklet)
 	}
 	case 2:
 		// "refresh" (actually, re-enumerate) Monitors
-		for (auto& m : rxm->monitor)
-			m.second->Refresh();
+		for (auto& [_, m] : rxm->monitor)
+			m->Refresh();
 		rv = TRUE;
 		break;
 	case 3:
@@ -1677,9 +1666,8 @@ void RXMConfigure::initializeBackgroundList()
 
 void RXMConfigure::initializeSensors()
 {
-	for (auto& l : rxm->layout[rxm->page]) {
-		const auto sensor = std::distance(rxm->layout[rxm->page], &l);
-		if (l.Active()) {
+	for (auto& l : rxm->layout[rxm->page])
+		if (const auto sensor = std::distance(rxm->layout[rxm->page], &l); l.Active()) {
 			// display this sensor's color...
 			((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(l.rgb);
 			// ... and [somewhat descriptive] name
@@ -1690,7 +1678,6 @@ void RXMConfigure::initializeSensors()
 			((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(RGB(192, 192, 192));
 			((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(L"");
 		}
-	}
 }
 
 void RXMConfigure::initializeSensorTree()
@@ -1698,8 +1685,8 @@ void RXMConfigure::initializeSensorTree()
 	static const std::wregex pathSeparator(L"\\|");
 
 	// FOREACH specialized Monitor...
-	for (const auto& pair : rxm->monitor) {
-		const auto& sensors = pair.second.get()->Sensors();
+	for (const auto& [_, m] : rxm->monitor) {
+		const auto& sensors = m->Sensors();
 		if (sensors.empty())
 			continue;
 		const int n = split(*cbegin(sensors), pathSeparator).size();
@@ -1711,7 +1698,7 @@ void RXMConfigure::initializeSensorTree()
 			for (auto i = 0; i < n; ++i)
 				if (path[i] != treeName[i])
 					if (i == 0)
-						treeHandle[0] = SensorTree.InsertItem(pair.second.get()->DisplayName().c_str(), TVI_ROOT),
+						treeHandle[0] = SensorTree.InsertItem(m->DisplayName().c_str(), TVI_ROOT),
 						treeName[0] = path[0];
 					else
 						treeHandle[i] = SensorTree.InsertItem(path[i].c_str(), treeHandle[i - 1]),
