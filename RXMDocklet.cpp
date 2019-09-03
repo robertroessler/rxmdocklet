@@ -615,7 +615,7 @@ Unit GPUZMonitor::unitFromRecord(const SensorRecord& r) const
 /*
 	Implementation of IMonitor for HWiNFO
 */
-class HWiMonitor : public MonitorCommonImpl<DWORD>{
+class HWiMonitor : public MonitorCommonImpl<DWORD> {
 	int enumerateSensors();
 	auto& hwi() const { return *(const HWiNFO_SENSORS_SHARED_MEM2*)mapping.Base(); }
 	auto& sE(int i) const { return *(PHWiNFO_SENSORS_SENSOR_ELEMENT)(mapping.Base() + hwi().dwOffsetOfSensorSection + hwi().dwSizeOfSensorElement * i); }
@@ -667,8 +667,7 @@ int HWiMonitor::enumerateSensors()
 	origSensors = h.dwNumSensorElements, origReadings = h.dwNumReadingElements;
 	for (decltype(h.dwNumReadingElements) i = 0; i < h.dwNumReadingElements; ++i) {
 		const auto& r = rE(i);
-		const auto u = unitFromReading(r);
-		if (u != None) {
+		if (const auto u = unitFromReading(r); u != None) {
 			const auto& s = sE(r.dwSensorIndex);
 			wstringstream pathSS;
 			pathSS << root << L'|' << computedSensorName(s);
