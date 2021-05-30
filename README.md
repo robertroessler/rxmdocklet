@@ -23,10 +23,10 @@ display slot, just select the text of its path and delete it.
 
 Finally, since 8 display slots may not be adequate for your use cases, either in
 terms of total readings presented, or desired logical grouping, RXMDocklet is
-able to choose from 1-4 "pages" to be displayed at any given time - just click
+able to choose from 1-4 "pages" to be displayed at any given time - just left-click
 on the docklet itself to select the "next" page.
 
-It is written in fairly idiomatic modern C++ 11/14, as well as using the MFC
+It is written in fairly idiomatic modern C++ 11/14/17, as well as using the MFC
 application framework - it is this last that causes the unfortunately large size
 of the DLL, since there has been a bit of "bloat" in MFC executables over the
 years, especially if one uses some of the expanded set of available controls.
@@ -44,7 +44,7 @@ received a workout in 32-bit form.
 * SpeedFan
 * CPUID HWMonitor (2)
 
-1) only in the pre-built RXMDocklet binary, see comments at end of More Details
+1) with limitations in non-licensed versions, see comments at end of More Details
 2) only versions 1.14-1.16, again, see comments at end of More Details
 
 ## Quickstart
@@ -126,16 +126,22 @@ authors make the details of their layout/usage of this shared memory public.
 There are cases where the author of a given monitoring app may be basing a
 commercial product on their app's ability to collect complete and accurate
 sensor readings, creating a potential "clash" between openly sharing the
-results of their substantial work... and not.  Historically, this issue has
-typically been resolved by only releasing binaries, saving full disclosure of
-technical details for paying customers (if at all).
+results of their substantial work... and not.  This results in some different
+limitations (and workarounds).
 
-Let's just say that the increasing popularity of the "open source" model of
-development and distribution of software may have added more questions than
-answers to this topic of discussion... for now, the fallout from this academic
-talk includes not being able to publish the RXMDocklet source for accessing the
-most excellent HWiNFO monitoring app at this time, as well as only supporting
-older versions of CPUID HWMonitor.
+In the case of the excellent HWiNFO, there is now differing behavior between
+licensed and non-licensed versions... with the former, all is good, while with
+the latter, the shared memory segment containing the HWiNFO readings that
+RXMDocklet uses "expires" after 12 hours (starting with version 7 onwards).
+
+To work around this, either purchase the licensed version of HWiNFO, or every
+12 hours, the displayed values in RXMDocklet will either "freeze" or display
+a "-" (indicating invalid data reads).  In either case, bring up HWiNFO's
+Settings page and re-enable "Shared Memory Support"... you *may* need to also
+use RXMDocklet's "Refresh" function.
+
+As for CPUID HWMonitor, their shared memory access went "closed" over 10 years
+ago now... after version "1.16".
 
 ## Credits
 

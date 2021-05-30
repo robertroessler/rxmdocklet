@@ -2,7 +2,8 @@
 #define _HWISENSSM2_H_INCLUDED_
 
 // Name of the file mapping object that needs to be opened using OpenFileMapping Function:
-#define HWiNFO_SENSORS_MAP_FILE_NAME2     "Global\\HWiNFO_SENS_SM2"
+#define HWiNFO_SENSORS_MAP_FILE_NAME2         "Global\\HWiNFO_SENS_SM2"
+#define HWiNFO_SENSORS_MAP_FILE_NAME2_REMOTE  "Global\\HWiNFO_SENS_SM2_REMOTE_"
 
 // Name of the global mutex which is acquired when accessing the Shared Memory space. Release as quick as possible !
 #define HWiNFO_SENSORS_SM2_MUTEX          "Global\\HWiNFO_SM2_MUTEX"
@@ -52,8 +53,9 @@ typedef struct _HWiNFO_SENSORS_SENSOR_ELEMENT {
 typedef struct _HWiNFO_SENSORS_SHARED_MEM2 {
 
   DWORD dwSignature;             // "HWiS" if active, 'DEAD' when inactive
-  DWORD dwVersion;               // v1 is latest
-  DWORD dwRevision;              //
+  DWORD dwVersion;               // v1 current
+  DWORD dwRevision;              // 0: Initial layout (HWiNFO ver <= 6.11)
+                                 // 1: Added (HWiNFO v6.11-3917)
   __time64_t poll_time;          // last polling time
   
   // descriptors for the Sensors section
@@ -66,6 +68,8 @@ typedef struct _HWiNFO_SENSORS_SHARED_MEM2 {
   DWORD dwSizeOfReadingElement;   // Size of each Reading element = sizeof( HWiNFO_SENSORS_READING_ELEMENT )
   DWORD dwNumReadingElements;     // Number of Reading elements
   
+  DWORD dwPollingPeriod;          // Current sensor polling period in HWiNFO. This variable is present since dwRevision=1 (HWiNFO v6.11) or later
+
 } HWiNFO_SENSORS_SHARED_MEM2, *PHWiNFO_SENSORS_SHARED_MEM2;
 
 #pragma pack()
