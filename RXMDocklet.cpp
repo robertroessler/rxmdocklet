@@ -402,9 +402,9 @@ public:
 			N.B. - Unit enums will be used as indices into this array, so
 			make SURE they are kept in sync!
 		*/
-		constexpr static char* unitString[]{
+		static const string unitString[]{
 			"None",
-			"V", u8"°", "rpm", "A", "W", "MHz", "%",
+			"V", (const char*)u8"°", "rpm", "A", "W", "MHz", "%",
 			"MB", "MB/s", "", "GT/s", "T", "x", "KB/s",
 			"F/s", "ms", "GB",
 			"???"
@@ -422,7 +422,7 @@ public:
 			N.B. - Unit enums will be used as indices into this array, so
 			make SURE they are kept in sync!
 		*/
-		constexpr static int displayFractional[]{
+		static const int displayFractional[]{
 			0,
 			3, 0, 0, 3, 3, 1, 1,
 			0, 3, 0, 1, 0, 0, 3,
@@ -864,7 +864,7 @@ class HWMonitor : public MonitorCommonImpl<const float*> {
 	const char* deviceDescription(int d) const { return mapping.Base() && d < deviceCount() ? device(d).description : "" ; }
 	int enumerateSensors();
 	const char* groupType(int g) const {
-		constexpr static char* sensorGroupTypes[MaxGroups]{
+		static const char* sensorGroupTypes[MaxGroups]{
 			"<voltages>",
 			"<temperatures>",
 			"<fans>",
@@ -929,7 +929,7 @@ int HWMonitor::enumerateSensors()
 }
 
 Unit HWMonitor::unitFromDGS(int d, int g, int s) const {
-	constexpr static Unit g2u[]{ Volts, Degrees, RPM, RPM, Amps, Watts };
+	static const Unit g2u[]{ Volts, Degrees, RPM, RPM, Amps, Watts };
 	return mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g) ? g2u[g] : None;
 }
 
@@ -986,7 +986,7 @@ class SFMonitor : public MonitorCommonImpl<const int*> {
 	const int cfgEndTagN = strlen(cfgEndTag);
 
 	int enumerateSensors();
-	string SFMonitor::getExecutableDir(string_view exeToFind);
+	string getExecutableDir(string_view exeToFind);
 	auto& sf() const { return *(const SfSharedMem*)mapping.Base(); }
 
 public:
@@ -1199,7 +1199,8 @@ struct RXM {
 						m->SensorValueString(path, rxm->fahrenheit == 1);
 				}
 				const auto wt = utf16StringFromUTF8(t.c_str());
-				g.DrawString(wt.c_str(), -1, &f, r, &sf, &SolidBrush(COLORREF2Color(rgb)));
+				const SolidBrush b{ COLORREF2Color(rgb) };
+				g.DrawString(wt.c_str(), -1, &f, r, &sf, &b);
 			}
 		}
 		bool UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
@@ -1537,14 +1538,14 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 		m->Refresh();
 
 	if (rxm->monitor.empty())
-		DockletSetLabel(hwndDocklet, "Start a Monitor application!");
+		DockletSetLabel(hwndDocklet, const_cast<char*>("Start a Monitor application!"));
 
 	// load profile (if there is one)...
 	string_view ini(szIni ? szIni : ""), iniGroup(szIniGroup ? szIniGroup : "");
 	if (!ini.empty() && !iniGroup.empty())
 		loadProfile(rxm.get(), ini, iniGroup);
 	else if (!rxm->monitor.empty())
-		DockletSetLabel(hwndDocklet, "Configure Docklet!");
+		DockletSetLabel(hwndDocklet, const_cast <char*>("Configure Docklet!"));
 	// ... and set background
 	renderBackground(rxm.get());
 
@@ -1748,7 +1749,7 @@ void RXMConfigure::assignSensor(int sensor)
 
 	// ... from the displayed sensor tree
 	const auto& path = pathFromTree[h];
-	const auto elidedPath = string(head(path)) + u8"…" + string(tail(path));
+	const auto elidedPath = string(head(path)) + (const char*)u8"…" + string(tail(path));
 	((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(elidedPath.c_str());
 	rxm->layout[rxm->page][sensor].Assign(path, ((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->GetColor());
 	renderPage(rxm);
@@ -1756,7 +1757,7 @@ void RXMConfigure::assignSensor(int sensor)
 
 void RXMConfigure::initializeBackgroundList()
 {
-	constexpr static char* b[BackgroundImages]{
+	static const char* b[BackgroundImages]{
 		"Black",
 		"Clear", "Clear with Border", "Clear with Grid",
 		"White", "White with Border", "White with Grid",
@@ -1776,7 +1777,7 @@ void RXMConfigure::initializeSensors()
 			// display this sensor's color...
 			((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(l.rgb);
 			// ... and [somewhat descriptive] name
-			const auto elidedPath = string(head(l.path)) + u8"…" + string(tail(l.path));
+			const auto elidedPath = string(head(l.path)) + (const char*)u8"…" + string(tail(l.path));
 			((CEdit*)GetDlgItem(editControlID[sensor]))->SetWindowText(elidedPath.c_str());
 		} else {
 			// (nothing [much] to do)
