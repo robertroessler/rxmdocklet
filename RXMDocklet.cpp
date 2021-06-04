@@ -540,7 +540,7 @@ int ABMonitor::enumerateSensors()
 			} else
 				pathSS << "pc";
 			pathSS << '|' << r.szSrcName;
-			const string path(pathSS.str());
+			const auto path{ pathSS.str() };
 			sensors.insert(path);
 			values[path] = &r.data, units[path] = u;
 			::OutputDebugString(path.c_str());
@@ -552,9 +552,11 @@ int ABMonitor::enumerateSensors()
 
 Unit ABMonitor::unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const
 {
+	// N.B. - MSI Afterburner uses (at best) a narrow code-page value for <degrees>
 	static const map<string, Unit> types{
 		{ "V", Volts }, { "\xb0""C", Degrees }, { "RPM", RPM }, { "MHz", MHz },
-		{ "%", UsagePerCent }, { "MB", MB }, { "FPS", FPS }, { "ms", MS }
+		{ "%", UsagePerCent }, { "MB", MB }, { "FPS", FPS }, { "ms", MS },
+		{"W", Watts}
 	};
 	const auto&& u = types.find(r.szSrcUnits);
 	return u != cend(types) ? u->second : Unknown;

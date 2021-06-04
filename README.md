@@ -28,7 +28,7 @@ on the docklet itself to select the "next" page.
 
 It is written in fairly idiomatic modern C++ 11/14/17, as well as using the MFC
 application framework - it is this last that causes the unfortunately large size
-of the DLL, since there has been a bit of "bloat" in MFC executables over the
+of the DLL, since there has been quite a lot of "bloat" in MFC executables over the
 years, especially if one uses some of the expanded set of available controls.
 
 Besides being "pure" C++, the code is believed to be both 32/64 -bit "safe", BUT
