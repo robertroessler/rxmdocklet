@@ -69,11 +69,11 @@ NOEXCEPT_RETURN(std::end(std::forward<T>(c)))
 
 template <typename T, size_t N>
 constexpr decltype(auto) decayed_begin(T(&c)[N])
-NOEXCEPT_RETURN(reinterpret_cast<typename std::remove_all_extents<T>::type*>(c))
+NOEXCEPT_RETURN(reinterpret_cast<typename std::remove_all_extents_t<T>*>(c))
 
 template <typename T, size_t N>
 constexpr decltype(auto) decayed_end(T(&c)[N])
-NOEXCEPT_RETURN(reinterpret_cast<typename std::remove_all_extents<T>::type*>(c + N))
+NOEXCEPT_RETURN(reinterpret_cast<typename std::remove_all_extents_t<T>*>(c + N))
 
 /*
 	Define "alias templates" so as to use c++14 "is_transparent" comparators.
@@ -97,21 +97,19 @@ using std::to_string;
 
 // (resolve ambiguity with D2D declaration)
 using RectF = Gdiplus::RectF;
+using Color = Gdiplus::Color;
 
 /*
 	The rxm namespace contains all primary and supporting logic for
 	accessing and displaying the provider-specific shared memory based
 	data representations of some common "hardware monitors"... the
 	expected and supported client is the RXMDocklet plugin, compatible
-	with the ObjectDock Docklet SDK v1.0 interface specification(**).
+	with the ObjectDock Docklet SDK v1.0 interface specification(*).
 
-	Currently supported apps include GPU-Z, HWiNFO(*), CPUID HWMonitor,
+	Currently supported apps include GPU-Z, HWiNFO, CPUID HWMonitor,
 	MSI Afterburner, and SpeedFan.
 
-	* - note that HWiNFO support at this time is only available in the
-	pre-built binary versions of RXMDocklet.
-
-	** - this has only been tested/used with the [final] 1.3.5 version
+	* - this has only been tested/used with the [final] 1.3.5 version
 	of RocketDock... and even though the RocketDock download page says
 	that it is "unsupported" on 64-bit versions of Windows, it works!
 */
@@ -321,9 +319,9 @@ constexpr string_view tail(string_view path)
 	return i != string::npos ? path.substr(i + 1) : "";
 }
 
-static vector<string> split(const string& text, const std::regex& sep)
+static inline vector<string> split(string_view path, const std::regex& sep)
 {
-	std::sregex_token_iterator first(cbegin(text), cend(text), sep, -1), last;
+	std::cregex_token_iterator first(path.data(), path.data() + path.size(), sep, -1), last;
 	return { first, last };
 }
 
@@ -402,7 +400,7 @@ public:
 			N.B. - Unit enums will be used as indices into this array, so
 			make SURE they are kept in sync!
 		*/
-		static const string unitString[]{
+		static const constinit char* unitString[]{
 			"None",
 			"V", (const char*)u8"°", "rpm", "A", "W", "MHz", "%",
 			"MB", "MB/s", "", "GT/s", "T", "x", "KB/s",
@@ -422,7 +420,7 @@ public:
 			N.B. - Unit enums will be used as indices into this array, so
 			make SURE they are kept in sync!
 		*/
-		static const int displayFractional[]{
+		static const constinit int displayFractional[]{
 			0,
 			3, 0, 0, 3, 3, 1, 1,
 			0, 3, 0, 1, 0, 0, 3,
@@ -711,7 +709,7 @@ int GPUZMonitor::enumerateSensors()
 
 Unit GPUZMonitor::unitFromRecord(const SensorRecord& r) const
 {
-	const static map<wstring, Unit> types{
+	static const map<wstring, Unit> types{
 		{L"V", Volts}, {L"°C", Degrees}, {L"RPM", RPM}, {L"MHz", MHz},
 		{L"%", UsagePerCent}, {L"%%", UsagePerCent}
 	};
@@ -866,7 +864,7 @@ class HWMonitor : public MonitorCommonImpl<const float*> {
 	const char* deviceDescription(int d) const { return mapping.Base() && d < deviceCount() ? device(d).description : "" ; }
 	int enumerateSensors();
 	const char* groupType(int g) const {
-		static const char* sensorGroupTypes[MaxGroups]{
+		static const constinit char* sensorGroupTypes[MaxGroups]{
 			"<voltages>",
 			"<temperatures>",
 			"<fans>",
@@ -931,7 +929,7 @@ int HWMonitor::enumerateSensors()
 }
 
 Unit HWMonitor::unitFromDGS(int d, int g, int s) const {
-	static const Unit g2u[]{ Volts, Degrees, RPM, RPM, Amps, Watts };
+	static const constinit Unit g2u[]{ Volts, Degrees, RPM, RPM, Amps, Watts };
 	return mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g) ? g2u[g] : None;
 }
 
@@ -1409,7 +1407,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		rxm->StartFocus(0, 0);
 
 	// yup, some kind of update *is* required, build rendering environment, part I...
-	const static RectF zones[]{
+	static const RectF zones[]{
 		{ 0, 0, 128, 32 }, { 0, 32, 128, 32 }, { 0, 64, 128, 32 }, { 0, 96, 128, 32 },
 		{ 0, 0, 128, 64 }, { 0, 64, 128, 64 }
 	};
@@ -1432,7 +1430,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	auto matchRectF = [&](const auto& pt, const auto& sz) {
 		const auto cx = (REAL)sz.cx / 128;
 		const auto cy = (REAL)sz.cy / 128;
-		std::remove_const<decltype(zones)>::type z;
+		std::remove_const_t<decltype(zones)> z;
 		copy(begin(zones), end(zones), begin(z));
 		for (auto& r : z)
 			r.Width *= cx, r.Height *= cy;
@@ -1504,7 +1502,7 @@ static void saveProfile(RXM* rxm, string_view ini, string_view iniGroup, bool as
 	// stash sensor, color, and temperature settings
 	for (auto p = 0; p < Pages; ++p)
 		for (auto s = 0; s < LayoutsPerPage; ++s) {
-			RXM::Layout& l = rxm->layout[p][s];
+			const auto& l = rxm->layout[p][s];
 			char k1[16], k2[16];
 			snprintf(k1, std::size(k1), "Sensor%d-%d", p + 1, s + 1);
 			snprintf(k2, std::size(k2), "Color%d-%d", p + 1, s + 1);
@@ -1759,7 +1757,7 @@ void RXMConfigure::assignSensor(int sensor)
 
 void RXMConfigure::initializeBackgroundList()
 {
-	static const char* b[BackgroundImages]{
+	static const constinit char* b[BackgroundImages]{
 		"Black",
 		"Clear", "Clear with Border", "Clear with Grid",
 		"White", "White with Border", "White with Grid",
@@ -1825,7 +1823,7 @@ void RXMConfigure::initializeSensorTree()
 void RXMConfigure::locateSensor(int sensor)
 {
 	// set this sensor's corresponding hardware tree location...
-	auto& l = rxm->layout[rxm->page][sensor];
+	const auto& l = rxm->layout[rxm->page][sensor];
 	if (!l.Active() || !l.Live(rxm))
 		return;	// we're outta here
 
