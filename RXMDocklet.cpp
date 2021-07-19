@@ -95,6 +95,8 @@ using std::make_unique;
 using std::copy;
 using std::to_string;
 
+using namespace std::string_literals;
+
 // (resolve ambiguity with D2D declaration)
 using RectF = Gdiplus::RectF;
 using Color = Gdiplus::Color;
@@ -153,7 +155,7 @@ constexpr size_t sizeOfUTF16CodeUnits(int u)
 }
 
 template<class CharOutput>
-inline void codePointToUTF8(char32_t c, CharOutput f)
+constexpr void codePointToUTF8(char32_t c, CharOutput f)
 {
 	if (c < 0x80)
 		f((char)c);
@@ -172,7 +174,7 @@ inline void codePointToUTF8(char32_t c, CharOutput f)
 }
 
 template<class WordOutput>
-inline void codePointToUTF16(char32_t c, WordOutput g)
+constexpr void codePointToUTF16(char32_t c, WordOutput g)
 {
 	if (c < 0xd800 || (c >= 0xe000 && c < 0x10000))
 		g((wchar_t)c);
@@ -200,7 +202,7 @@ constexpr char32_t codePointFromUTF16(const wchar_t* u)
 		((u[0] - 0xd800) << 10) + (u[1] - 0xdc00) + 0x10000;
 }
 
-string utf8StringFromUTF16(const wchar_t* u)
+constexpr string utf8StringFromUTF16(const wchar_t* u)
 {
 	string t;
 	while (*u)
@@ -209,7 +211,7 @@ string utf8StringFromUTF16(const wchar_t* u)
 	return t;
 }
 
-wstring utf16StringFromUTF8(const char* u)
+constexpr wstring utf16StringFromUTF8(const char* u)
 {
 	wstring t;
 	while (*u)
@@ -222,25 +224,25 @@ wstring utf16StringFromUTF8(const char* u)
 	Definition and implementation of simple [threading-aware] spinlock
 */
 class RSpinLock {
-	std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
+	std::atomic_flag lock_{};
 
 public:
-	inline void lock() {
+	auto lock() {
 		// try simple lock...
 		while (lock_.test_and_set(std::memory_order_acquire))
 			// ... nope, release time slice and keep trying
 			std::this_thread::yield();
 	}
-	inline void unlock() { lock_.clear(std::memory_order_release); }
+	auto unlock() { lock_.clear(std::memory_order_release); }
 };
 
 /*
 	Implementation of Windows-style shared memory mapping
 */
 class Mapping {
-	HANDLE mH = nullptr;				// mapped obj handle
-	LPBYTE vB = nullptr;				// mapped obj view base
-	size_t vN = 0;						// mapped obj view size
+	HANDLE mH{};						// mapped obj handle
+	LPBYTE vB{};						// mapped obj view base
+	size_t vN{};						// mapped obj view size
 
 public:
 	Mapping() {}
@@ -250,7 +252,7 @@ public:
 			::UnmapViewOfFile(vB), ::CloseHandle(mH);
 	}
 
-	bool Create(const char* sharedObjName)
+	auto Create(const char* sharedObjName)
 	{
 		if (vN != 0)
 			return true;	// (mapping ALREADY here)
@@ -275,8 +277,8 @@ public:
 		return true;
 	}
 
-	constexpr LPBYTE Base() const { return vB; }
-	constexpr size_t Size() const { return vN; }
+	constexpr auto Base() const { return vB; }
+	constexpr auto Size() const { return vN; }
 };
 
 /*
@@ -336,7 +338,7 @@ public:
 	virtual bool Refresh() = 0;
 	virtual bool RefreshNeeded() const = 0;
 	virtual const sensor_enumeration_t& Sensors() const = 0;
-	virtual Unit SensorUnit(string_view path) const = 0;
+	virtual constexpr Unit SensorUnit(string_view path) const = 0;
 	virtual string SensorUnitString(string_view path, bool fahrenheit = false) const = 0;
 	virtual float SensorValue(string_view path, bool fahrenheit = false) const = 0;
 	virtual string SensorValueString(string_view path, bool fahrenheit = false) const = 0;
@@ -420,7 +422,7 @@ public:
 			N.B. - Unit enums will be used as indices into this array, so
 			make SURE they are kept in sync!
 		*/
-		static const constinit int displayFractional[]{
+		static constexpr int displayFractional[]{
 			0,
 			3, 0, 0, 3, 3, 1, 1,
 			0, 3, 0, 1, 0, 0, 3,
@@ -495,9 +497,9 @@ class ABMonitor : public MonitorCommonImpl<const float*> {
 
 	int enumerateSensors();
 	auto& ab() const { return *(const MAHM_SHARED_MEMORY_HEADER*)mapping.Base(); }
-	MAHM_SHARED_MEMORY_ENTRY& rE(int i) const { return *(MAHM_SHARED_MEMORY_ENTRY*)(mapping.Base() + ab().dwHeaderSize + ab().dwEntrySize * i); }
-	MAHM_SHARED_MEMORY_GPU_ENTRY& gE(int i) const { return *(MAHM_SHARED_MEMORY_GPU_ENTRY*)(mapping.Base() + ab().dwHeaderSize + ab().dwEntrySize * ab().dwNumEntries + ab().dwGpuEntrySize * i); }
-	Unit unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const;
+	auto& rE(int i) const { return *(MAHM_SHARED_MEMORY_ENTRY*)(mapping.Base() + ab().dwHeaderSize + ab().dwEntrySize * i); }
+	auto& gE(int i) const { return *(MAHM_SHARED_MEMORY_GPU_ENTRY*)(mapping.Base() + ab().dwHeaderSize + ab().dwEntrySize * ab().dwNumEntries + ab().dwGpuEntrySize * i); }
+	auto unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const;
 
 public:
 	ABMonitor(string root, string displayName) : MonitorCommonImpl(root, displayName) {}
@@ -510,6 +512,18 @@ public:
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
 	}
 };
+
+auto ABMonitor::unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const
+{
+	// N.B. - MSI Afterburner uses (at best) a narrow code-page value for <degrees>
+	static const map<string, Unit> types{
+		{ "V", Volts }, { "\xb0""C", Degrees }, { "RPM", RPM }, { "MHz", MHz },
+		{ "%", UsagePerCent }, { "MB", MB }, { "FPS", FPS }, { "ms", MS },
+		{"W", Watts}
+	};
+	const auto&& u = types.find(r.szSrcUnits);
+	return u != cend(types) ? u->second : Unknown;
+}
 
 int ABMonitor::enumerateSensors()
 {
@@ -546,18 +560,6 @@ int ABMonitor::enumerateSensors()
 	}
 
 	return sensors.size();
-}
-
-Unit ABMonitor::unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const
-{
-	// N.B. - MSI Afterburner uses (at best) a narrow code-page value for <degrees>
-	static const map<string, Unit> types{
-		{ "V", Volts }, { "\xb0""C", Degrees }, { "RPM", RPM }, { "MHz", MHz },
-		{ "%", UsagePerCent }, { "MB", MB }, { "FPS", FPS }, { "ms", MS },
-		{"W", Watts}
-	};
-	const auto&& u = types.find(r.szSrcUnits);
-	return u != cend(types) ? u->second : Unknown;
 }
 
 /*
@@ -666,7 +668,7 @@ class GPUZMonitor : public MonitorCommonImpl<const double*> {
 
 	int enumerateSensors();
 	auto& gpuz() const { return *(const GpuzSharedMem*)mapping.Base(); }
-	Unit unitFromRecord(const SensorRecord& r) const;
+	auto unitFromRecord(const SensorRecord& r) const;
 
 public:
 	GPUZMonitor(string root, string displayName) : MonitorCommonImpl(root, displayName) {}
@@ -679,6 +681,16 @@ public:
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
 	}
 };
+
+auto GPUZMonitor::unitFromRecord(const SensorRecord& r) const
+{
+	static const map<wstring, Unit> types{
+		{L"V", Volts}, {L"°C", Degrees}, {L"RPM", RPM}, {L"MHz", MHz},
+		{L"%", UsagePerCent}, {L"%%", UsagePerCent}
+	};
+	const auto&& u = types.find(r.unit);
+	return u != cend(types) ? u->second : None;
+}
 
 int GPUZMonitor::enumerateSensors()
 {
@@ -707,16 +719,6 @@ int GPUZMonitor::enumerateSensors()
 	return sensors.size();
 }
 
-Unit GPUZMonitor::unitFromRecord(const SensorRecord& r) const
-{
-	static const map<wstring, Unit> types{
-		{L"V", Volts}, {L"°C", Degrees}, {L"RPM", RPM}, {L"MHz", MHz},
-		{L"%", UsagePerCent}, {L"%%", UsagePerCent}
-	};
-	const auto&& u = types.find(r.unit);
-	return u != cend(types) ? u->second : None;
-}
-
 /*
 	Implementation of IMonitor for HWiNFO
 */
@@ -725,7 +727,7 @@ class HWiMonitor : public MonitorCommonImpl<DWORD> {
 	auto& hwi() const { return *(const HWiNFO_SENSORS_SHARED_MEM2*)mapping.Base(); }
 	auto& sE(int i) const { return *(PHWiNFO_SENSORS_SENSOR_ELEMENT)(mapping.Base() + hwi().dwOffsetOfSensorSection + hwi().dwSizeOfSensorElement * i); }
 	auto& rE(int i) const { return *(PHWiNFO_SENSORS_READING_ELEMENT)(mapping.Base() + hwi().dwOffsetOfReadingSection + hwi().dwSizeOfReadingElement * i); }
-	Unit unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const;
+	auto unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const;
 
 	DWORD origSensors = 0;
 	DWORD origReadings = 0;
@@ -751,6 +753,41 @@ public:
 			return MonitorCommonImpl::SensorValueString(path, fahrenheit);
 	}
 };
+
+auto HWiMonitor::unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const
+{
+	switch (r.tReading) {
+	case SENSOR_TYPE_NONE:
+		return None;
+	case SENSOR_TYPE_TEMP:
+		return Degrees;
+	case SENSOR_TYPE_VOLT:
+		return Volts;
+	case SENSOR_TYPE_FAN:
+		return RPM;
+	case SENSOR_TYPE_CURRENT:
+		return Amps;
+	case SENSOR_TYPE_POWER:
+		return Watts;
+	case SENSOR_TYPE_CLOCK:
+		return MHz;
+	case SENSOR_TYPE_USAGE:
+		return UsagePerCent;
+	case SENSOR_TYPE_OTHER: {
+		// try to deduce our Unit from the "units" string in the READING...
+		// [UsagePerCent], MB, MBs, YorN, GTs, T, X, KBs
+		static const map<string, Unit> extendedTypes{
+			{"%", UsagePerCent},
+			{"MB", MB}, {"MB/s", MBs}, {"Yes/No", YorN}, {"GT/s", GTs},
+			{"T", T}, {"x", X}, {"KB/s", KBs}, {"GB", GB}
+		};
+		const auto&& u = extendedTypes.find(r.szUnit);
+		return u != cend(extendedTypes) ? u->second : Unknown; // we did our best
+	}
+	default:
+		return None; // "shouldn't happen"
+	}
+}
 
 int HWiMonitor::enumerateSensors()
 {
@@ -787,41 +824,6 @@ int HWiMonitor::enumerateSensors()
 	}
 
 	return sensors.size();
-}
-
-Unit HWiMonitor::unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const
-{
-	switch (r.tReading) {
-	case SENSOR_TYPE_NONE:
-		return None;
-	case SENSOR_TYPE_TEMP:
-		return Degrees;
-	case SENSOR_TYPE_VOLT:
-		return Volts;
-	case SENSOR_TYPE_FAN:
-		return RPM;
-	case SENSOR_TYPE_CURRENT:
-		return Amps;
-	case SENSOR_TYPE_POWER:
-		return Watts;
-	case SENSOR_TYPE_CLOCK:
-		return MHz;
-	case SENSOR_TYPE_USAGE:
-		return UsagePerCent;
-	case SENSOR_TYPE_OTHER: {
-		// try to deduce our Unit from the "units" string in the READING...
-		// [UsagePerCent], MB, MBs, YorN, GTs, T, X, KBs
-		static const map<string, Unit> extendedTypes{
-			{"%", UsagePerCent},
-			{"MB", MB}, {"MB/s", MBs}, {"Yes/No", YorN}, {"GT/s", GTs},
-			{"T", T}, {"x", X}, {"KB/s", KBs}, {"GB", GB}
-		};
-		const auto&& u = extendedTypes.find(r.szUnit);
-		return u != cend(extendedTypes) ? u->second : Unknown; // we did our best
-	}
-	default:
-		return None; // "shouldn't happen"
-	}
 }
 
 /*
@@ -878,7 +880,7 @@ class HWMonitor : public MonitorCommonImpl<const float*> {
 	const auto& node(int d, int g, int s) const { return ((const HWMSensor*)(mapping.Base() + device(d).map[g].nodePtr))[s]; }
 	int sensorCount(int d, int g) const { return mapping.Base() && d < deviceCount() && g < MaxGroups ? device(d).map[g].nodeNum : 0; }
 	const char* sensorLabel(int d, int g, int s) const { return mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g) ? node(d, g, s).name : ""; }
-	Unit unitFromDGS(int d, int g, int s) const;
+	auto unitFromDGS(int d, int g, int s) const;
 
 public:
 	HWMonitor(string root, string displayName) : MonitorCommonImpl(root, displayName) {}
@@ -891,6 +893,11 @@ public:
 		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
 	}
 };
+
+auto HWMonitor::unitFromDGS(int d, int g, int s) const {
+	static constexpr Unit g2u[]{ Volts, Degrees, RPM, RPM, Amps, Watts };
+	return mapping.Base() && d < deviceCount() && g < MaxGroups&& s < sensorCount(d, g) ? g2u[g] : None;
+}
 
 int HWMonitor::enumerateSensors()
 {
@@ -926,11 +933,6 @@ int HWMonitor::enumerateSensors()
 	}
 
 	return sensors.size();
-}
-
-Unit HWMonitor::unitFromDGS(int d, int g, int s) const {
-	static const constinit Unit g2u[]{ Volts, Degrees, RPM, RPM, Amps, Watts };
-	return mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g) ? g2u[g] : None;
 }
 
 /*
@@ -1133,14 +1135,14 @@ string SFMonitor::getExecutableDir(string_view exeToFind)
 /*
 	type for mapping between IMonitor implementations and "root" names
 */
-typedef map<string, std::unique_ptr<IMonitor>> string_monitor_map_t;
+using string_monitor_map_t = map<string, std::unique_ptr<IMonitor>>;
 }
 
 using namespace rxm;
 
 // define our docklet instance data
 
-static inline Color COLORREF2Color(COLORREF cr)
+static inline auto COLORREF2Color(COLORREF cr)
 {
 	return Color(GetRValue(cr), GetGValue(cr), GetBValue(cr));
 }
@@ -1206,10 +1208,10 @@ struct RXM {
 		bool UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
 	} layout[Pages][LayoutsPerPage];	// sensor layouts (all pages)
 
-	int Focus() const { return focusedSensor; }
-	bool DecayFocus() { return --focusedTicksRemaining == 0; }
-	bool Focused() const { return focusedTicksRemaining > 0; }
-	void StartFocus(int sensor, int n) { focusedSensor = sensor, focusedTicksRemaining = n; }
+	constexpr auto Focus() const { return focusedSensor; }
+	constexpr auto DecayFocus() { return --focusedTicksRemaining == 0; }
+	constexpr auto Focused() const { return focusedTicksRemaining > 0; }
+	constexpr auto StartFocus(int sensor, int n) { focusedSensor = sensor, focusedTicksRemaining = n; }
 	IMonitor* FromPath(string path) const { return monitor.find(head(path))->second.get(); }
 };
 
@@ -1224,11 +1226,11 @@ class RXMConfigure : public CDialogEx
 	map<HTREEITEM, sensor_t> pathFromTree;
 	map<sensor_t, HTREEITEM> treeFromPath;
 
-	const int colorControlID[LayoutsPerPage] {
+	static constexpr int colorControlID[LayoutsPerPage] {
 		IDC_COLOR1, IDC_COLOR2, IDC_COLOR3, IDC_COLOR4,
 		IDC_COLOR5, IDC_COLOR6, IDC_COLOR7, IDC_COLOR8
 	};
-	const int editControlID[LayoutsPerPage] {
+	static constexpr int editControlID[LayoutsPerPage] {
 		IDC_SENSOR1, IDC_SENSOR2, IDC_SENSOR3, IDC_SENSOR4,
 		IDC_SENSOR5, IDC_SENSOR6, IDC_SENSOR7, IDC_SENSOR8
 	};
@@ -1241,14 +1243,22 @@ class RXMConfigure : public CDialogEx
 	void locateSensor(int sensor);
 	void unassignSensor(int sensor);
 
+	constexpr auto isFahrenheit() const { return celsiusOrFahrenheit == 1; }
+
 public:
-	RXMConfigure(RXM* rxm, CWnd* pParent = nullptr);   // standard constructor
-	virtual ~RXMConfigure();
+	RXMConfigure() = delete;
+	RXMConfigure(RXM* rxm, CWnd* pParent = nullptr)
+		: CDialogEx(RXMConfigure::IDD, pParent)
+		, rxm(rxm)
+		, celsiusOrFahrenheit(0) {}
+	virtual ~RXMConfigure() = default;
 
 // Dialog Data
 	enum { IDD = IDD_RXM_CONFIGURE };
 
 protected:
+	int celsiusOrFahrenheit;
+
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 
 	DECLARE_MESSAGE_MAP()
@@ -1257,8 +1267,7 @@ public:
 	CTabCtrl SensorTab;
 	CTreeCtrl SensorTree;
 	CComboBox Background;
-	int CelsiusOrFahrenheit;
-	CMFCColorButton fake;				// (apparently needed to drag in some code/resource?)
+	CMFCColorButton setColor;
 	CMFCButton assign1, assign2, assign3, assign4, assign5, assign6, assign7, assign8;
 	CMFCButton locate1, locate2, locate3, locate4, locate5, locate6, locate7, locate8;
 
@@ -1306,32 +1315,31 @@ public:
 
 // RXMConfigure dialog support functions
 
-static void initializeRXM(RXM* rxm, HWND hwndDocklet, HINSTANCE hInstance)
+constexpr void initializeRXM(RXM* rxm, HWND hwndDocklet, HINSTANCE hInstance)
 {
 	rxm->hwndDocklet = hwndDocklet, rxm->hInstance = hInstance;
 }
 
-static void loadProfile(RXM* rxm, string_view ini, string_view iniGroup)
+static void loadProfile(RXM* rxm, const char* ini, const char* iniGroup)
 {
-	string iniW(cbegin(ini), cend(ini)), iniGroupW(cbegin(iniGroup), cend(iniGroup));
 	// slurp in sensor, color, and temperature settings
 	for (auto p = 0; p < Pages; ++p)
 		for (auto s = 0; s < LayoutsPerPage; ++s) {
 			char k1[16], k2[16], b[MAX_PATH];
 			snprintf(k1, std::size(k1), "Sensor%d-%d", p + 1, s + 1);
-			if (::GetPrivateProfileString(iniGroupW.c_str(), k1, "", b, MAX_PATH, iniW.c_str())) {
+			if (::GetPrivateProfileString(iniGroup, k1, "", b, MAX_PATH, ini)) {
 				snprintf(k2, std::size(k2), "Color%d-%d", p + 1, s + 1);
-				rxm->layout[p][s].Assign(b, ::GetPrivateProfileInt(iniGroupW.c_str(), k2, 0, iniW.c_str()));
+				rxm->layout[p][s].Assign(b, ::GetPrivateProfileInt(iniGroup, k2, 0, ini));
 			}
 		}
 
-	const auto j = ::GetPrivateProfileInt(iniGroupW.c_str(), "Fahrenheit", 0, iniW.c_str());
+	const auto j = ::GetPrivateProfileInt(iniGroup, "Fahrenheit", 0, ini);
 	rxm->fahrenheit = j == 0 ? 0 : 1;
-	const auto k = ::GetPrivateProfileInt(iniGroupW.c_str(), "Background", 0, iniW.c_str());
+	const auto k = ::GetPrivateProfileInt(iniGroup, "Background", 0, ini);
 	rxm->image = __min(__max(k, 0), BackgroundImages-1);
 }
 
-static bool pageIsActive(RXM* rxm)
+constexpr auto pageIsActive(RXM* rxm)
 {
 	return std::any_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [](auto l) {
 		return l.Active();
@@ -1493,12 +1501,11 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	DockletSetImageOverlay(rxm->hwndDocklet, bm.release());
 }
 
-static void saveProfile(RXM* rxm, string_view ini, string_view iniGroup, bool asDefault = false)
+static void saveProfile(RXM* rxm, const char* ini, const char* iniGroup, bool asDefault = false)
 {
-	string iniW(cbegin(ini), cend(ini)), iniGroupW(cbegin(iniGroup), cend(iniGroup));
 	// handle "save local defaults" AS REQUIRED
 	if (asDefault)
-		WritePrivateProfileInt(iniGroupW.c_str(), "ForceDockletDefaults", 1, iniW.c_str());
+		WritePrivateProfileInt(iniGroup, "ForceDockletDefaults", 1, ini);
 	// stash sensor, color, and temperature settings
 	for (auto p = 0; p < Pages; ++p)
 		for (auto s = 0; s < LayoutsPerPage; ++s) {
@@ -1507,15 +1514,15 @@ static void saveProfile(RXM* rxm, string_view ini, string_view iniGroup, bool as
 			snprintf(k1, std::size(k1), "Sensor%d-%d", p + 1, s + 1);
 			snprintf(k2, std::size(k2), "Color%d-%d", p + 1, s + 1);
 			if (l.Active()) {
-				::WritePrivateProfileString(iniGroupW.c_str(), k1, l.path.c_str(), iniW.c_str());
-				WritePrivateProfileInt(iniGroupW.c_str(), k2, l.rgb, iniW.c_str());
+				::WritePrivateProfileString(iniGroup, k1, l.path.c_str(), ini);
+				WritePrivateProfileInt(iniGroup, k2, l.rgb, ini);
 			} else {
-				::WritePrivateProfileString(iniGroupW.c_str(), k1, nullptr, iniW.c_str());
-				::WritePrivateProfileString(iniGroupW.c_str(), k2, nullptr, iniW.c_str());
+				::WritePrivateProfileString(iniGroup, k1, nullptr, ini);
+				::WritePrivateProfileString(iniGroup, k2, nullptr, ini);
 			}
 		}
-	WritePrivateProfileInt(iniGroupW.c_str(), "Fahrenheit", rxm->fahrenheit, iniW.c_str());
-	WritePrivateProfileInt(iniGroupW.c_str(), "Background", rxm->image, iniW.c_str());
+	WritePrivateProfileInt(iniGroup, "Fahrenheit", rxm->fahrenheit, ini);
+	WritePrivateProfileInt(iniGroup, "Background", rxm->image, ini);
 }
 
 // ObjectDock SDK 1.0 callbacks
@@ -1543,7 +1550,7 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 	// load profile (if there is one)...
 	string_view ini(szIni ? szIni : ""), iniGroup(szIniGroup ? szIniGroup : "");
 	if (!ini.empty() && !iniGroup.empty())
-		loadProfile(rxm.get(), ini, iniGroup);
+		loadProfile(rxm.get(), ini.data(), iniGroup.data()); // zero-terminated!
 	else if (!rxm->monitor.empty())
 		DockletSetLabel(hwndDocklet, const_cast <char*>("Configure Docklet!"));
 	// ... and set background
@@ -1693,25 +1700,14 @@ void CALLBACK OnSaveRXM(RXM* rxm, char *szIni, char *szIniGroup, BOOL bIsForExpo
 
 // RXMConfigure dialog implementation
 
-RXMConfigure::RXMConfigure(RXM* rxm, CWnd* pParent /*=nullptr*/)
-	: CDialogEx(RXMConfigure::IDD, pParent)
-	, rxm(rxm)
-	, CelsiusOrFahrenheit(0)
-{
-}
-
-RXMConfigure::~RXMConfigure()
-{
-}
-
 void RXMConfigure::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
 	DDX_Control(pDX, IDC_SENSOR_TAB, SensorTab);
 	DDX_Control(pDX, IDC_SENSOR_TREE, SensorTree);
 	DDX_Control(pDX, IDC_BACKGROUND, Background);
-	DDX_Radio(pDX, IDC_CELSIUS, CelsiusOrFahrenheit);
-	DDX_Control(pDX, IDC_COLOR1, fake);
+	DDX_Radio(pDX, IDC_CELSIUS, celsiusOrFahrenheit);
+	DDX_Control(pDX, IDC_COLOR1, setColor);
 	DDX_Control(pDX, IDC_ASSIGN1, assign1);
 	DDX_Control(pDX, IDC_ASSIGN2, assign2);
 	DDX_Control(pDX, IDC_ASSIGN3, assign3);
@@ -1888,13 +1884,13 @@ END_MESSAGE_MAP()
 
 void RXMConfigure::OnBnClickedCelsius()
 {
-	rxm->fahrenheit = CelsiusOrFahrenheit = 0;
+	rxm->fahrenheit = isFahrenheit();
 	renderPage(rxm, RenderType::Forced);
 }
 
 void RXMConfigure::OnBnClickedFahrenheit()
 {
-	rxm->fahrenheit = CelsiusOrFahrenheit = 1;
+	rxm->fahrenheit = isFahrenheit();
 	renderPage(rxm, RenderType::Forced);
 }
 
@@ -1902,8 +1898,7 @@ void RXMConfigure::OnBnClickedSavelocal()
 {
 	char pathN[MAX_PATH];
 	DockletGetRelativeFolder(rxm->hwndDocklet, pathN);
-	const string path(pathN);
-	saveProfile(rxm, "Docklets\\Defaults.ini", path + "RXMDocklet.dll", true);
+	saveProfile(rxm, "Docklets\\Defaults.ini", (pathN + "RXMDocklet.dll"s).c_str(), true);
 }
 
 void RXMConfigure::OnCbnSelchangeBackground()
@@ -1930,7 +1925,7 @@ BOOL RXMConfigure::OnInitDialog()
 	// init Sensor, Temperature, and Background controls
 	initializeSensors();
 	initializeBackgroundList();
-	CelsiusOrFahrenheit = rxm->fahrenheit;
+	celsiusOrFahrenheit = rxm->fahrenheit;
 	Background.SetCurSel(rxm->image);
 
 	UpdateData(FALSE);
@@ -1959,7 +1954,7 @@ void RXMConfigure::OnTvnGetInfoTipSensorTree(NMHDR *pNMHDR, LRESULT *pResult)
 	if (auto h = pGetInfoTip->hItem; !SensorTree.ItemHasChildren(h)) {
 		const auto& path = pathFromTree[h];
 		const auto m = rxm->FromPath(path);
-		const bool fahrenheit = CelsiusOrFahrenheit == 1;
+		const auto fahrenheit = isFahrenheit();
 		auto t{ m->SensorValueString(path, fahrenheit) };
 		t.push_back(' '), t.append(m->SensorUnitString(path, fahrenheit));
 		strncpy(pGetInfoTip->pszText, t.c_str(), pGetInfoTip->cchTextMax);
