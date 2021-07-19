@@ -287,14 +287,18 @@ public:
 using sensor_t = string;
 using sensor_enumeration_t = set<sensor_t>;
 
-enum { Pages = 4, LayoutsPerPage = 8, BackgroundImages = 10 };
+// (generic COMPILE-TIME "get integer value for typesafe enum" function)
+template<class E>
+constexpr auto as_integer(E u) { return static_cast<std::underlying_type_t<E>>(u); }
+
+enum class LayoutConf { Pages = 4, LayoutsPerPage = 8, BackgroundImages = 10 };
 
 enum class RenderType { Normal = 0, Forced, StartFocus, EndFocus };
 
 /*
 	"universal" units to which all Monitor-specific units are mapped
 */
-enum Unit {
+enum class Unit {
 	None,
 	// "base" units understood across most providers
 	Volts, Degrees, RPM, Amps, Watts, MHz, UsagePerCent,
@@ -351,6 +355,7 @@ template<typename T>
 class MonitorCommonImpl : public IMonitor {
 protected:
 	using value_type = T;
+	using enum Unit;
 
 	Mapping mapping;
 	string root, displayName;
@@ -361,7 +366,7 @@ protected:
 
 	MonitorCommonImpl(string root, string displayName) : root(root), displayName(displayName) {}
 
-	constexpr double c2f(double d) const { return floor((d * 9 / 5 + 32) + 0.5); }
+	constexpr auto c2f(double d) const { return floor((d * 9 / 5 + 32) + 0.5); }
 	template<class SynchronizedInit>
 	bool refreshImpl(SynchronizedInit f) {
 		std::lock_guard acquire(lock);
@@ -409,7 +414,7 @@ public:
 			"F/s", "ms", "GB",
 			"???"
 		};
-		string s{ unitString[u] };
+		string s{ unitString[as_integer(u)] };
 		if (u == Degrees)
 			s.push_back(fahrenheit ? 'F' : 'C');
 		return s;
@@ -430,13 +435,16 @@ public:
 			0
 		};
 		const auto v = SensorValue(path, fahrenheit);
-		auto w{ displayFractional[u] };
+		auto w{ displayFractional[as_integer(u)] };
 		/*
 			Use "dynamic precision reduction" to stay within ~4 digits...
 			"fractional digits" width value is a *hint*, not absolute!
 		*/
 		if (w == 1) {
-			if (v >= 1000)
+			// try dropping decimal on simple width check...
+			if (v >= 1000 ||
+				// ... or try "Fan" heuristic (aka "hack")
+				(u == UsagePerCent && path.find("Fan") != string::npos))
 				w = 0;
 		} else if (w == 3)
 			if (v >= 100)
@@ -453,6 +461,7 @@ public:
 	Implementation of IMonitor for MSI Afterburner
 */
 class ABMonitor : public MonitorCommonImpl<const float*> {
+	using enum Unit;
 
 #pragma pack(push, 1)
 	struct MAHM_SHARED_MEMORY_HEADER {
@@ -566,6 +575,7 @@ int ABMonitor::enumerateSensors()
 	Implementation of IMonitor for Core Temp
 */
 class CTMonitor : public MonitorCommonImpl<const float*> {
+	using enum Unit;
 
 #pragma pack(push, 1)
 	typedef struct core_temp_shared_data_ex {
@@ -642,6 +652,7 @@ int CTMonitor::enumerateSensors()
 	Implementation of IMonitor for GPU-Z
 */
 class GPUZMonitor : public MonitorCommonImpl<const double*> {
+	using enum Unit;
 	enum { MaxRecords = 128 };
 
 #pragma pack(push, 1)
@@ -723,6 +734,8 @@ int GPUZMonitor::enumerateSensors()
 	Implementation of IMonitor for HWiNFO
 */
 class HWiMonitor : public MonitorCommonImpl<DWORD> {
+	using enum Unit;
+
 	int enumerateSensors();
 	auto& hwi() const { return *(const HWiNFO_SENSORS_SHARED_MEM2*)mapping.Base(); }
 	auto& sE(int i) const { return *(PHWiNFO_SENSORS_SENSOR_ELEMENT)(mapping.Base() + hwi().dwOffsetOfSensorSection + hwi().dwSizeOfSensorElement * i); }
@@ -895,6 +908,7 @@ public:
 };
 
 auto HWMonitor::unitFromDGS(int d, int g, int s) const {
+	using enum Unit;
 	static constexpr Unit g2u[]{ Volts, Degrees, RPM, RPM, Amps, Watts };
 	return mapping.Base() && d < deviceCount() && g < MaxGroups&& s < sensorCount(d, g) ? g2u[g] : None;
 }
@@ -1027,6 +1041,7 @@ int SFMonitor::enumerateSensors()
 			continue;
 
 		switch (state) {
+		using enum Unit;
 		case WantVer:
 			if (strncmp(line, cfgVersionTag, cfgVersionTagN) == 0)
 				version = line + cfgVersionTagN, state = WantTag;
@@ -1162,6 +1177,8 @@ static inline auto COLORREF2Color(COLORREF cr)
 	of 8 values, with 2 columns of 4 on each page.
 */
 struct RXM {
+	using enum LayoutConf;
+
 	HWND hwndDocklet = nullptr;			// THIS docklet's HWND
 	HINSTANCE hInstance = nullptr;		// docklet's DLL HINSTANCE
 	int page = 0;						// current layout page
@@ -1176,11 +1193,11 @@ struct RXM {
 		COLORREF rgb = 0;				// this color
 		float last = -1;				// last value
 
-		bool Active() const { return !path.empty(); }
+		auto Active() const { return !path.empty(); }
 		void Assign(COLORREF c) { rgb = c; }
 		void Assign(string_view p, COLORREF c) { path = p, rgb = c; }
 		void Clear() { path.clear(), rgb = 0, last = -1; }
-		bool Live(RXM* rxm) const {
+		auto Live(RXM* rxm) const {
 			const auto&& m = rxm->monitor.find(head(path));
 			if (m == cend(rxm->monitor))
 				return false;
@@ -1205,8 +1222,8 @@ struct RXM {
 				g.DrawString(wt.c_str(), -1, &f, r, &sf, &b);
 			}
 		}
-		bool UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
-	} layout[Pages][LayoutsPerPage];	// sensor layouts (all pages)
+		auto UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
+	} layout[as_integer(Pages)][as_integer(LayoutsPerPage)];	// sensor layouts (all pages)
 
 	constexpr auto Focus() const { return focusedSensor; }
 	constexpr auto DecayFocus() { return --focusedTicksRemaining == 0; }
@@ -1219,6 +1236,8 @@ struct RXM {
 
 class RXMConfigure : public CDialogEx
 {
+	using enum LayoutConf;
+
 	//DECLARE_DYNAMIC(RXMConfigure)
 
 	RXM* rxm;							// OUR docklet instance data
@@ -1226,11 +1245,11 @@ class RXMConfigure : public CDialogEx
 	map<HTREEITEM, sensor_t> pathFromTree;
 	map<sensor_t, HTREEITEM> treeFromPath;
 
-	static constexpr int colorControlID[LayoutsPerPage] {
+	static constexpr int colorControlID[as_integer(LayoutsPerPage)] {
 		IDC_COLOR1, IDC_COLOR2, IDC_COLOR3, IDC_COLOR4,
 		IDC_COLOR5, IDC_COLOR6, IDC_COLOR7, IDC_COLOR8
 	};
-	static constexpr int editControlID[LayoutsPerPage] {
+	static constexpr int editControlID[as_integer(LayoutsPerPage)] {
 		IDC_SENSOR1, IDC_SENSOR2, IDC_SENSOR3, IDC_SENSOR4,
 		IDC_SENSOR5, IDC_SENSOR6, IDC_SENSOR7, IDC_SENSOR8
 	};
@@ -1323,8 +1342,8 @@ constexpr void initializeRXM(RXM* rxm, HWND hwndDocklet, HINSTANCE hInstance)
 static void loadProfile(RXM* rxm, const char* ini, const char* iniGroup)
 {
 	// slurp in sensor, color, and temperature settings
-	for (auto p = 0; p < Pages; ++p)
-		for (auto s = 0; s < LayoutsPerPage; ++s) {
+	for (auto p = 0; p < as_integer(LayoutConf::Pages); ++p)
+		for (auto s = 0; s < as_integer(LayoutConf::LayoutsPerPage); ++s) {
 			char k1[16], k2[16], b[MAX_PATH];
 			snprintf(k1, std::size(k1), "Sensor%d-%d", p + 1, s + 1);
 			if (::GetPrivateProfileString(iniGroup, k1, "", b, MAX_PATH, ini)) {
@@ -1336,7 +1355,7 @@ static void loadProfile(RXM* rxm, const char* ini, const char* iniGroup)
 	const auto j = ::GetPrivateProfileInt(iniGroup, "Fahrenheit", 0, ini);
 	rxm->fahrenheit = j == 0 ? 0 : 1;
 	const auto k = ::GetPrivateProfileInt(iniGroup, "Background", 0, ini);
-	rxm->image = __min(__max(k, 0), BackgroundImages-1);
+	rxm->image = __min(__max((int)k, 0), as_integer(LayoutConf::BackgroundImages) - 1);
 }
 
 constexpr auto pageIsActive(RXM* rxm)
@@ -1480,7 +1499,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		default: {
 			// "2-column": up to 4 sensors on left, up to 4 sensors on right
 			const auto i = &l - &layouts[0];
-			sf.SetAlignment(i < LayoutsPerPage / 2 ? StringAlignmentNear : StringAlignmentFar);
+			sf.SetAlignment(i < as_integer(LayoutConf::LayoutsPerPage) / 2 ? StringAlignmentNear : StringAlignmentFar);
 			l.Render(rxm, g, f, zones[i & 3], sf), ++rendered;
 			break;
 		}
@@ -1507,8 +1526,8 @@ static void saveProfile(RXM* rxm, const char* ini, const char* iniGroup, bool as
 	if (asDefault)
 		WritePrivateProfileInt(iniGroup, "ForceDockletDefaults", 1, ini);
 	// stash sensor, color, and temperature settings
-	for (auto p = 0; p < Pages; ++p)
-		for (auto s = 0; s < LayoutsPerPage; ++s) {
+	for (auto p = 0; p < as_integer(LayoutConf::Pages); ++p)
+		for (auto s = 0; s < as_integer(LayoutConf::LayoutsPerPage); ++s) {
 			const auto& l = rxm->layout[p][s];
 			char k1[16], k2[16];
 			snprintf(k1, std::size(k1), "Sensor%d-%d", p + 1, s + 1);
@@ -1604,7 +1623,7 @@ BOOL CALLBACK OnLeftButtonClick(RXM* rxm, POINT *pt, SIZE *sz)
 		const auto delta = ::GetAsyncKeyState(VK_SHIFT) < 0 ? -1 : 1;
 		const auto i = rxm->page;
 		do
-			rxm->page = (rxm->page + delta) & (Pages - 1);
+			rxm->page = (rxm->page + delta) & (as_integer(LayoutConf::Pages) - 1);
 		while (!pageIsActive(rxm) && rxm->page != i);
 		if (rxm->page != i)
 			renderPage(rxm, RenderType::Forced);
@@ -1753,7 +1772,7 @@ void RXMConfigure::assignSensor(int sensor)
 
 void RXMConfigure::initializeBackgroundList()
 {
-	static const constinit char* b[BackgroundImages]{
+	static const constinit char* b[as_integer(LayoutConf::BackgroundImages)]{
 		"Black",
 		"Clear", "Clear with Border", "Clear with Grid",
 		"White", "White with Border", "White with Grid",
