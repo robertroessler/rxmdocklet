@@ -421,21 +421,20 @@ public:
 	}
 	constexpr string SensorValueString(string_view path, bool fahrenheit) const override {
 		const auto u = SensorUnit(path);
+		const auto v = SensorValue(path, fahrenheit);
 		/*
 			# of fractional digits to display for above "universal" units
 
 			N.B. - Unit enums will be used as indices into this array, so
 			make SURE they are kept in sync!
 		*/
-		static constexpr int displayFractional[]{
-			0,
-			3, 0, 0, 3, 3, 1, 1,
-			0, 3, 0, 1, 0, 0, 3,
-			0, 0, 0,
-			0
-		};
-		const auto v = SensorValue(path, fahrenheit);
-		auto w{ displayFractional[as_integer(u)] };
+		auto w{
+			"\000"
+			"\003\000\000\003\003\001\001"
+			"\000\003\000\001\000\000\003"
+			"\000\000\000"
+			"\000"
+			[as_integer(u)]};
 		/*
 			Use "dynamic precision reduction" to stay within ~4 digits...
 			"fractional digits" width value is a *hint*, not absolute!
