@@ -28,6 +28,7 @@
 */
 
 #include "stdafx.h"
+
 #include <atomic>
 #include <mutex>
 #include <thread>
@@ -35,12 +36,13 @@
 #include <string_view>
 #include <sstream>
 #include <fstream>
-#include <iomanip>
 #include <memory>
 #include <set>
 #include <map>
 #include <vector>
 #include <regex>
+#include <format>
+
 #include "hwisenssm2.h"
 #include "sdk/DockletSDK.h"
 #include "TlHelp32.h"
@@ -93,7 +95,6 @@ using std::stringstream;
 using std::begin, std::end, std::cbegin, std::cend;
 using std::make_unique;
 using std::copy;
-using std::to_string;
 
 using namespace std::string_literals;
 
@@ -450,9 +451,7 @@ public:
 				w = 1;
 			else if (v >= 10)
 				w = 2;
-		char b[16];
-		snprintf(b, std::size(b), "%.*f", w, v);
-		return b;
+		return std::format("{:.{}f}", v, w);
 	}
 };
 
@@ -806,10 +805,9 @@ int HWiMonitor::enumerateSensors()
 	::OutputDebugString("HWiMonitor::enumerateSensors...");
 	// create a "sensorNameFromInstanceNumber"
 	auto computedSensorName = [](auto s) {
-		string_view raw_dev(s.szSensorNameUser);
-		string deviceName(cbegin(raw_dev), cend(raw_dev));
+		string deviceName{ s.szSensorNameUser };
 		if (s.dwSensorInst > 0)
-			deviceName += " #" + to_string(s.dwSensorInst + 1);
+			std::format_to(std::back_inserter(deviceName), " #{}", s.dwSensorInst + 1);
 		return deviceName;
 	};
 	sensors.clear(), values.clear(), units.clear();
@@ -915,20 +913,16 @@ auto HWMonitor::unitFromDGS(int d, int g, int s) const {
 int HWMonitor::enumerateSensors()
 {
 	auto dgs = [](auto d, auto g, auto s) {
-		return
-			to_string(d) + ',' +
-			to_string(g) + ',' +
-			to_string(s);
+		return std::format("{},{},{}", d, g, s);
 	};
 	::OutputDebugString("HWMonitor::enumerateSensors...");
 	std::multiset<string> devices;
 	sensors.clear(), values.clear(), units.clear();
 
 	for (auto d = 0; d < deviceCount(); ++d) {
-		const string raw_dev(deviceDescription(d));
-		const string deviceName(cbegin(raw_dev), cend(raw_dev));
+		const string deviceName{ deviceDescription(d) };
 		devices.insert(deviceName);
-		auto dupes = devices.count(deviceName);
+		const auto dupes = devices.count(deviceName);
 		for (auto g = 0; g < MaxGroups; ++g)
 			for (auto s = 0; s < sensorCount(d, g); ++s) {
 				stringstream pathSS;
@@ -1192,7 +1186,7 @@ struct RXM {
 		COLORREF rgb = 0;				// this color
 		float last = -1;				// last value
 
-		auto Active() const { return !path.empty(); }
+		constexpr auto Active() const { return !path.empty(); }
 		void Assign(COLORREF c) { rgb = c; }
 		void Assign(string_view p, COLORREF c) { path = p, rgb = c; }
 		void Clear() { path.clear(), rgb = 0, last = -1; }
@@ -1200,8 +1194,7 @@ struct RXM {
 			const auto&& m = rxm->monitor.find(head(path));
 			if (m == cend(rxm->monitor))
 				return false;
-			const auto& s = m->second.get()->Sensors();
-			return s.find(path) != cend(s);
+			return m->second.get()->Sensors().contains(path);
 		}
 		void Render(RXM* rxm, Graphics& g, const Gdiplus::Font& f, const RectF& r, const StringFormat& sf, bool unitString = false) {
 			// display individual sensor with supplied GdiPlus formatting & attributes AS REQUIRED
@@ -1343,11 +1336,10 @@ static void loadProfile(RXM* rxm, const char* ini, const char* iniGroup)
 	// slurp in sensor, color, and temperature settings
 	for (auto p = 0; p < as_integer(LayoutConf::Pages); ++p)
 		for (auto s = 0; s < as_integer(LayoutConf::LayoutsPerPage); ++s) {
-			char k1[16], k2[16], b[MAX_PATH];
-			snprintf(k1, std::size(k1), "Sensor%d-%d", p + 1, s + 1);
-			if (::GetPrivateProfileString(iniGroup, k1, "", b, MAX_PATH, ini)) {
-				snprintf(k2, std::size(k2), "Color%d-%d", p + 1, s + 1);
-				rxm->layout[p][s].Assign(b, ::GetPrivateProfileInt(iniGroup, k2, 0, ini));
+			string k1{ std::format("Sensor{}-{}", p + 1, s + 1) };
+			if (char b[MAX_PATH]; ::GetPrivateProfileString(iniGroup, k1.c_str(), "", b, MAX_PATH, ini)) {
+				string k2{ std::format("Color{}-{}", p + 1, s + 1) };
+				rxm->layout[p][s].Assign(b, ::GetPrivateProfileInt(iniGroup, k2.c_str(), 0, ini));
 			}
 		}
 
@@ -1528,15 +1520,15 @@ static void saveProfile(RXM* rxm, const char* ini, const char* iniGroup, bool as
 	for (auto p = 0; p < as_integer(LayoutConf::Pages); ++p)
 		for (auto s = 0; s < as_integer(LayoutConf::LayoutsPerPage); ++s) {
 			const auto& l = rxm->layout[p][s];
-			char k1[16], k2[16];
-			snprintf(k1, std::size(k1), "Sensor%d-%d", p + 1, s + 1);
-			snprintf(k2, std::size(k2), "Color%d-%d", p + 1, s + 1);
+			string
+				k1{ std::format("Sensor{}-{}", p + 1, s + 1) },
+				k2{ std::format("Color{}-{}", p + 1, s + 1) };
 			if (l.Active()) {
-				::WritePrivateProfileString(iniGroup, k1, l.path.c_str(), ini);
-				WritePrivateProfileInt(iniGroup, k2, l.rgb, ini);
+				::WritePrivateProfileString(iniGroup, k1.c_str(), l.path.c_str(), ini);
+				WritePrivateProfileInt(iniGroup, k2.c_str(), l.rgb, ini);
 			} else {
-				::WritePrivateProfileString(iniGroup, k1, nullptr, ini);
-				::WritePrivateProfileString(iniGroup, k2, nullptr, ini);
+				::WritePrivateProfileString(iniGroup, k1.c_str(), nullptr, ini);
+				::WritePrivateProfileString(iniGroup, k2.c_str(), nullptr, ini);
 			}
 		}
 	WritePrivateProfileInt(iniGroup, "Fahrenheit", rxm->fahrenheit, ini);
@@ -1902,13 +1894,13 @@ END_MESSAGE_MAP()
 
 void RXMConfigure::OnBnClickedCelsius()
 {
-	rxm->fahrenheit = isFahrenheit();
+	rxm->fahrenheit = celsiusOrFahrenheit = 0;
 	renderPage(rxm, RenderType::Forced);
 }
 
 void RXMConfigure::OnBnClickedFahrenheit()
 {
-	rxm->fahrenheit = isFahrenheit();
+	rxm->fahrenheit = celsiusOrFahrenheit = 1;
 	renderPage(rxm, RenderType::Forced);
 }
 
