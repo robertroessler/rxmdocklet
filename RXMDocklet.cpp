@@ -91,10 +91,8 @@ using std::vector;
 using std::string;
 using std::wstring;
 using std::string_view;
-using std::stringstream;
 using std::begin, std::end, std::cbegin, std::cend;
 using std::make_unique;
-using std::copy;
 
 using namespace std::string_literals;
 
@@ -339,14 +337,14 @@ class IMonitor {
 public:
 	virtual ~IMonitor() {};
 
-	virtual string DisplayName() const = 0;
+	virtual constexpr string DisplayName() const = 0;
 	virtual bool Refresh() = 0;
-	virtual bool RefreshNeeded() const = 0;
+	virtual constexpr bool RefreshNeeded() const = 0;
 	virtual const sensor_enumeration_t& Sensors() const = 0;
 	virtual constexpr Unit SensorUnit(string_view path) const = 0;
-	virtual string SensorUnitString(string_view path, bool fahrenheit = false) const = 0;
-	virtual float SensorValue(string_view path, bool fahrenheit = false) const = 0;
-	virtual string SensorValueString(string_view path, bool fahrenheit = false) const = 0;
+	virtual constexpr string SensorUnitString(string_view path, bool fahrenheit = false) const = 0;
+	virtual constexpr float SensorValue(string_view path, bool fahrenheit = false) const = 0;
+	virtual constexpr string SensorValueString(string_view path, bool fahrenheit = false) const = 0;
 };
 
 /*
@@ -544,10 +542,9 @@ int ABMonitor::enumerateSensors()
 	for (decltype(a.dwNumEntries) i = 0; i < a.dwNumEntries; ++i) {
 		const auto& r = rE(i);
 		if (const auto u = unitFromRecord(r); u != None) {
-			stringstream pathSS;
-			pathSS << root << '|';
+			auto path{ std::format("{}|", root) };
 			if (r.dwSrcId != 0xffffffff && r.dwSrcId < 0x80) {
-				pathSS << gE(r.dwGpu).szDevice;
+				std::format_to(std::back_inserter(path), "{}", gE(r.dwGpu).szDevice);
 				/*
 					append #2, #3 etc for any subsequent GPUs - a simplifying
 					assumption, since cases when they AREN'T in a "standard"
@@ -555,11 +552,10 @@ int ABMonitor::enumerateSensors()
 					how the case of discrete GPU + integrated GPU stabilizes)
 				*/
 				if (r.dwGpu > 0)
-					pathSS << " #" << r.dwGpu + 1;
+					std::format_to(std::back_inserter(path), " #{}", r.dwGpu + 1);
 			} else
-				pathSS << "pc";
-			pathSS << '|' << r.szSrcName;
-			const auto path{ pathSS.str() };
+				path += "pc";
+			std::format_to(std::back_inserter(path), "|{}", r.szSrcName);
 			sensors.insert(path);
 			values[path] = &r.data, units[path] = u;
 			::OutputDebugString(path.c_str());
@@ -632,13 +628,11 @@ int CTMonitor::enumerateSensors()
 	for (decltype(c.uiCPUCnt) cpu = 0; cpu < c.uiCPUCnt; ++cpu)
 		for (decltype(c.uiCoreCnt) core = 0; core < c.uiCoreCnt; ++core) {
 			auto off = [c](auto i, auto j) { return c.uiCoreCnt * i + j; };
-			std::stringstream pathSS;
-			pathSS << root << '|' << "CPU [#" << cpu << "]: " << c.sCPUName << '|' << "Core #" << core;
-			const string corePath(pathSS.str());
-			const string tempPath(corePath + " Temperature");
+			const auto corePath{ std::format("{}|CPU [#{}]: {}|Core #{}", root, cpu, c.sCPUName, core) };
+			const auto tempPath{ corePath + " Temperature" };
 			sensors.insert(tempPath), values[tempPath] = c.fTemp + off(cpu, core), units[tempPath] = Degrees;
 			::OutputDebugString(tempPath.c_str());
-			const string loadPath(corePath + " Load");
+			const auto loadPath{ corePath + " Load" };
 			sensors.insert(loadPath), values[loadPath] = (value_type)(c.uiLoad + off(cpu, core)), units[loadPath] = UsagePerCent;
 			::OutputDebugString(loadPath.c_str());
 		}
@@ -716,9 +710,7 @@ int GPUZMonitor::enumerateSensors()
 		if (s.name[0] == L'\0')
 			break;	// nothing more to examine
 		if (const auto u = unitFromRecord(s); u != None) {
-			stringstream pathSS;
-			pathSS << root << '|' << deviceName << '|' << utf8StringFromUTF16(s.name);
-			const string path(pathSS.str());
+			const auto path{ std::format("{}|{}|{}", root, deviceName, utf8StringFromUTF16(s.name)) };
 			sensors.insert(path);
 			values[path] = &s.value, units[path] = u;
 			::OutputDebugString(path.c_str());
@@ -821,12 +813,9 @@ int HWiMonitor::enumerateSensors()
 		const auto& r = rE(i);
 		if (const auto u = unitFromReading(r); u != None) {
 			const auto& s = sE(r.dwSensorIndex);
-			stringstream pathSS;
-			pathSS << root << '|' << computedSensorName(s);
-			pathSS << '|' << r.szLabelUser;
+			auto path{ std::format("{}|{}|{}", root, computedSensorName(s), r.szLabelUser) };
 			if (r.szUnit[0])
-				pathSS << ' ' << r.szUnit;
-			const string path(pathSS.str());
+				std::format_to(std::back_inserter(path), " {}", r.szUnit);
 			sensors.insert(path);
 			values[path] = i, units[path] = u;
 			::OutputDebugString(path.c_str());
@@ -925,13 +914,11 @@ int HWMonitor::enumerateSensors()
 		const auto dupes = devices.count(deviceName);
 		for (auto g = 0; g < MaxGroups; ++g)
 			for (auto s = 0; s < sensorCount(d, g); ++s) {
-				stringstream pathSS;
-				pathSS << root << '|' << deviceName;
+				auto path{ std::format("{}|{}", root, deviceName) };
 				if (dupes > 1)
-					pathSS << " #" << dupes;
+					std::format_to(std::back_inserter(path), " #{}", dupes);
 				// N.B. - ONLY CPUID Hardware Monitor needs this "extra" level
-				pathSS << '|' << groupType(g) << '|' << sensorLabel(d, g, s);
-				const string path(pathSS.str());
+				std::format_to(std::back_inserter(path), "|{}|{}", groupType(g), sensorLabel(d, g, s));
 				sensors.insert(path);
 				values[path] = &node(d, g, s).value;
 				units[path] = unitFromDGS(d, g, s);
@@ -1023,9 +1010,8 @@ int SFMonitor::enumerateSensors()
 	if (!config.good())
 		return 0;	// we're outta here
 
-	string version, longName, path;
+	string version, longName;
 	map<string, string> devices;
-	path.reserve(128);
 	int temps = 0, fans = 0, volts = 0;
 	ParseState state = WantVer;
 	char line[132];
@@ -1061,8 +1047,7 @@ int SFMonitor::enumerateSensors()
 
 		case WantTempName:
 			if (strncmp(line, cfgSensorNameTag, cfgSensorNameTagN) == 0) {
-				path = root + '|', path += devices[longName], path += "|<temperatures>|";
-				path += line + cfgSensorNameTagN;
+				const auto path{ std::format("{}|{}|<temperatures>|{}", root, devices[longName], line + cfgSensorNameTagN) };
 				values[path] = &sf().temps[temps++], units[path] = Degrees;
 				sensors.insert(path);
 				::OutputDebugString(path.c_str());
@@ -1072,8 +1057,7 @@ int SFMonitor::enumerateSensors()
 
 		case WantFanName:
 			if (strncmp(line, cfgSensorNameTag, cfgSensorNameTagN) == 0) {
-				path = root + '|', path += devices[longName], path += "|<fans>|";
-				path += line + cfgSensorNameTagN;
+				const auto path{ std::format("{}|{}|<fans>|{}", root, devices[longName], line + cfgSensorNameTagN) };
 				values[path] = &sf().fans[fans++], units[path] = RPM;
 				sensors.insert(path);
 				::OutputDebugString(path.c_str());
@@ -1083,10 +1067,9 @@ int SFMonitor::enumerateSensors()
 
 		case WantVoltName:
 			if (strncmp(line, cfgSensorNameTag, cfgSensorNameTagN) == 0) {
-				path = root + '|', path += devices[longName], path += "|<voltages>|";
-				path += line + cfgSensorNameTagN;
+				const auto path{ std::format("{}|{}|<voltages>|{}", root, devices[longName], line + cfgSensorNameTagN) };
 				// UGLY HACK to deal with SpeedFan [config?] problem
-				if (sensors.find(path) == cend(sensors)) {
+				if (!sensors.contains(path)) {
 					values[path] = &sf().volts[volts++], units[path] = Volts;
 					sensors.insert(path);
 					::OutputDebugString(path.c_str());
@@ -1122,8 +1105,8 @@ string SFMonitor::getExecutableDir(string_view exeToFind)
 	string exePath;
 	PROCESSENTRY32 pe { sizeof PROCESSENTRY32 };
 	for (auto status = ::Process32First(sH, &pe); status; status = ::Process32Next(sH, &pe)) {
-		string exe = pe.szExeFile;
-		transform(cbegin(exe), cend(exe), begin(exe), ::tolower);
+		string exe{ pe.szExeFile };
+		std::transform(cbegin(exe), cend(exe), begin(exe), ::tolower);
 		if (exe.find(exeToFind) != string::npos) {
 			if (auto pH = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID); pH != nullptr) {
 				char fullExe[MAX_PATH];
@@ -1449,7 +1432,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		const auto cx = (REAL)sz.cx / 128;
 		const auto cy = (REAL)sz.cy / 128;
 		std::remove_const_t<decltype(zones)> z;
-		copy(begin(zones), end(zones), begin(z));
+		std::copy(begin(zones), end(zones), begin(z));
 		for (auto& r : z)
 			r.Width *= cx, r.Height *= cy;
 		const auto x = REAL(pt.x);
@@ -1665,10 +1648,10 @@ BOOL CALLBACK OnRightButtonClick(RXM* rxm, POINT *ptCursor, SIZE *sizeDocklet)
 		RXMConfigure cfg(rxm);
 		const auto oldPage = rxm->page, oldFahrenheit = rxm->fahrenheit, oldImage = rxm->image;
 		decltype(rxm->layout) oldLayout;
-		copy(decayed_begin(rxm->layout), decayed_end(rxm->layout), decayed_begin(oldLayout));
+		std::copy(decayed_begin(rxm->layout), decayed_end(rxm->layout), decayed_begin(oldLayout));
 		if (cfg.DoModal() != IDOK) {
 			// user changed their mind, put it all back... AS REQUIRED
-			copy(decayed_begin(oldLayout), decayed_end(oldLayout), decayed_begin(rxm->layout));
+			std::copy(decayed_begin(oldLayout), decayed_end(oldLayout), decayed_begin(rxm->layout));
 			// ... and try to save a little [resource allocation] work
 			if (rxm->image != oldImage) {
 				rxm->image = oldImage;
