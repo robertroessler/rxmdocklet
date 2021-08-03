@@ -26,7 +26,7 @@ terms of total readings presented, or desired logical grouping, RXMDocklet is
 able to choose from 1-4 "pages" to be displayed at any given time - just left-click
 on the docklet itself to select the "next" page.
 
-It is written in fairly idiomatic modern C++ 11/14/17, as well as using the MFC
+It is written in fairly idiomatic modern C++ 17/20, as well as using the MFC
 application framework - it is this last that causes the unfortunately large size
 of the DLL, since there has been quite a lot of "bloat" in MFC executables over the
 years, especially if one uses some of the expanded set of available controls.

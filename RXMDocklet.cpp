@@ -1581,7 +1581,7 @@ void CALLBACK OnGetInformation(char *szName, char *szAuthor, int *iVersion, char
 		"SpeedFan (www.almico.com/speedfan.php),\r\n"
 		"and CPUID HWMonitor (www.cpuid.com).\r\n"
 		"\r\n"
-		"Copyright (C) 2009-2017 Robert Roessler\r\n"
+		"Copyright (C) 2009-2021 Robert Roessler\r\n"
 		"www.rftp.com");
 }
 
@@ -1948,9 +1948,7 @@ void RXMConfigure::OnTvnGetInfoTipSensorTree(NMHDR *pNMHDR, LRESULT *pResult)
 		const auto& path = pathFromTree[h];
 		const auto m = rxm->FromPath(path);
 		const auto fahrenheit = isFahrenheit();
-		auto t{ m->SensorValueString(path, fahrenheit) };
-		t.push_back(' '), t.append(m->SensorUnitString(path, fahrenheit));
-		strncpy(pGetInfoTip->pszText, t.c_str(), pGetInfoTip->cchTextMax);
+		std::format_to_n(pGetInfoTip->pszText, pGetInfoTip->cchTextMax, "{} {}", m->SensorValueString(path, fahrenheit), m->SensorUnitString(path, fahrenheit));
 	}
 	*pResult = 0;
 }
