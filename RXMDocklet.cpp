@@ -62,18 +62,22 @@
 #define NOEXCEPT_RETURN(...) noexcept(noexcept(__VA_ARGS__)) { return (__VA_ARGS__); }
 
 template <typename T>
+requires std::is_array_v<T>
 constexpr decltype(auto) decayed_begin(T&& c)
 NOEXCEPT_RETURN(std::begin(std::forward<T>(c)))
 
 template <typename T>
+requires std::is_array_v<T>
 constexpr decltype(auto) decayed_end(T&& c)
 NOEXCEPT_RETURN(std::end(std::forward<T>(c)))
 
 template <typename T, size_t N>
+requires std::is_array_v<T>
 constexpr decltype(auto) decayed_begin(T(&c)[N])
 NOEXCEPT_RETURN(reinterpret_cast<typename std::remove_all_extents_t<T>*>(c))
 
 template <typename T, size_t N>
+requires std::is_array_v<T>
 constexpr decltype(auto) decayed_end(T(&c)[N])
 NOEXCEPT_RETURN(reinterpret_cast<typename std::remove_all_extents_t<T>*>(c + N))
 
@@ -288,6 +292,7 @@ using sensor_enumeration_t = set<sensor_t>;
 
 // (generic COMPILE-TIME "get integer value for typesafe enum" function)
 template<class E>
+requires std::is_enum_v<E>
 constexpr auto as_integer(E u) { return static_cast<std::underlying_type_t<E>>(u); }
 
 enum class LayoutConf { Pages = 4, LayoutsPerPage = 8, BackgroundImages = 10 };
