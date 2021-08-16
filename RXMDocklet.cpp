@@ -104,6 +104,39 @@ using namespace std::string_literals;
 using RectF = Gdiplus::RectF;
 using Color = Gdiplus::Color;
 
+// (change the following line to true for tracing with ::OutputDebugStringA())
+constexpr auto trace_enabled = true;
+
+/*
+	Construct trace message prefix including current "state machine" indicators.
+*/
+static auto tracePre(char* b, size_t n)
+{
+	if constexpr (trace_enabled) {
+		const auto r = std::format_to_n(b, n, "RxTRACE> ");
+		return string_view(b, r.size);
+	}
+}
+
+template<typename... ARGS>
+static void trace(const ARGS&... args)
+{
+	if constexpr (trace_enabled) {
+		string_view fmt{ "{}{}{}{}{}{}{}{}", (min(sizeof...(ARGS), 7) + 1) * 2 };
+		char b[32];
+		::OutputDebugStringA(std::format(fmt, tracePre(b, std::size(b)), args...).c_str());
+	}
+}
+
+template<typename... ARGS>
+static void trace_ex(string_view fmt, const ARGS&... args)
+{
+	if constexpr (trace_enabled) {
+		char b[32];
+		::OutputDebugStringA(std::format("{}"s.append(fmt), tracePre(b, std::size(b)), args...).c_str());
+	}
+}
+
 /*
 	The rxm namespace contains all primary and supporting logic for
 	accessing and displaying the provider-specific shared memory based
@@ -258,7 +291,9 @@ public:
 	auto Create(const char* sharedObjName)
 	{
 		if (vN != 0)
-			return true;	// (mapping ALREADY here)
+			return
+				trace_ex("MAPPING of '{}' ALREADY PRESENT @{:p} with {:#x} bytes", sharedObjName, (void*)vB, vN),
+					true;	// (mapping ALREADY here)
 
 		mH = ::OpenFileMapping(GENERIC_READ, FALSE, sharedObjName);
 		if (mH == nullptr)
@@ -277,6 +312,7 @@ public:
 		}
 
 		vN = mbI.RegionSize;	// NOW it's a full mapping
+		trace_ex("MAPPED '{}' @{:p} with {:#x} bytes", sharedObjName, (void*)vB, vN);
 		return true;
 	}
 
@@ -567,6 +603,7 @@ int ABMonitor::enumerateSensors()
 		}
 	}
 
+	trace("ABMonitor found ", sensors.size(), " sensors");
 	return sensors.size();
 }
 
@@ -642,6 +679,7 @@ int CTMonitor::enumerateSensors()
 			::OutputDebugString(loadPath.c_str());
 		}
 
+	trace("CTMonitor found ", sensors.size(), " sensors");
 	return sensors.size();
 }
 
@@ -722,6 +760,7 @@ int GPUZMonitor::enumerateSensors()
 		}
 	}
 
+	trace("GPUZMonitor found ", sensors.size(), " sensors");
 	return sensors.size();
 }
 
@@ -827,6 +866,7 @@ int HWiMonitor::enumerateSensors()
 		}
 	}
 
+	trace("HWiMonitor found ", sensors.size(), " sensors");
 	return sensors.size();
 }
 
@@ -931,6 +971,7 @@ int HWMonitor::enumerateSensors()
 			}
 	}
 
+	trace("HWMonitor found ", sensors.size(), " sensors");
 	return sensors.size();
 }
 
@@ -1091,6 +1132,7 @@ int SFMonitor::enumerateSensors()
 		}
 	}
 
+	trace("SFMonitor found ", sensors.size(), " sensors");
 	return sensors.size();
 }
 
@@ -1160,56 +1202,54 @@ static inline auto COLORREF2Color(COLORREF cr)
 struct RXM {
 	using enum LayoutConf;
 
-	HWND hwndDocklet = nullptr;			// THIS docklet's HWND
-	HINSTANCE hInstance = nullptr;		// docklet's DLL HINSTANCE
-	int page = 0;						// current layout page
-	int timer = 0;						// Windows timer id
-	int image = 0;						// background selection
-	int fahrenheit = 0;					// 1=do Fahrenheit conversion
-	int focusedSensor = 0;				// alt-click focused sensor #
-	int focusedTicksRemaining = 0;		// track alt-click focus mode
+	constexpr auto Focus() const { return focusedSensor; }
+	constexpr auto DecayFocus() { return --focusedTicksRemaining == 0; }
+	constexpr auto Focused() const { return focusedTicksRemaining > 0; }
+	constexpr auto StartFocus(int sensor, int n) { focusedSensor = sensor, focusedTicksRemaining = n; }
+	const auto&& FromPath(string path) const { return monitor.find(head(path))->second.get(); }
+
+	HWND hwndDocklet{};					// THIS docklet's HWND
+	HINSTANCE hInstance{};				// docklet's DLL HINSTANCE
+	int page{};							// current layout page
+	int timer{};						// Windows timer id
+	int image{};						// background selection
+	int fahrenheit{};					// 1=do Fahrenheit conversion
+	int focusedSensor{};				// alt-click focused sensor #
+	int focusedTicksRemaining{};		// track alt-click focus mode
 	string_monitor_map_t monitor;		// RXM Monitor-specific impls
 	struct Layout {
 		string path;					// our sensor
-		COLORREF rgb = 0;				// this color
-		float last = -1;				// last value
+		COLORREF rgb{ 0 };				// this color
+		float last{ -1 };				// last value
 
 		constexpr auto Active() const { return !path.empty(); }
 		void Assign(COLORREF c) { rgb = c; }
 		void Assign(string_view p, COLORREF c) { path = p, rgb = c; }
 		void Clear() { path.clear(), rgb = 0, last = -1; }
 		auto Live(RXM* rxm) const {
-			const auto&& m = rxm->monitor.find(head(path));
-			if (m == cend(rxm->monitor))
-				return false;
-			return m->second.get()->Sensors().contains(path);
+			const auto&& mi = rxm->monitor.find(head(path));
+			return mi != cend(rxm->monitor) ? mi->second.get()->Sensors().contains(path) : false;
 		}
 		void Render(RXM* rxm, Graphics& g, const Gdiplus::Font& f, const RectF& r, const StringFormat& sf, bool unitString = false) {
 			// display individual sensor with supplied GdiPlus formatting & attributes AS REQUIRED
 			if (Active()) {
-				string t{ '-' };
+				wstring t{ L'-' };
 				if (Live(rxm)) {
 					auto m = rxm->FromPath(path);
 					if (m->RefreshNeeded())
 						m->Refresh();
 					last = m->SensorValue(path);
-					t = unitString ?
-						m->SensorUnitString(path, rxm->fahrenheit == 1) :
-						m->SensorValueString(path, rxm->fahrenheit == 1);
-				}
-				const auto wt = utf16StringFromUTF8(t.c_str());
+					t = utf16StringFromUTF8((unitString ?
+						m->SensorUnitString(path,  rxm->fahrenheit == 1):
+						m->SensorValueString(path, rxm->fahrenheit == 1)).c_str());
+				} else
+					trace("Sensor ", path, " is UNDEAD!");
 				const SolidBrush b{ COLORREF2Color(rgb) };
-				g.DrawString(wt.c_str(), -1, &f, r, &sf, &b);
+				g.DrawString(t.c_str(), -1, &f, r, &sf, &b);
 			}
 		}
 		auto UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
 	} layout[as_integer(Pages)][as_integer(LayoutsPerPage)];	// sensor layouts (all pages)
-
-	constexpr auto Focus() const { return focusedSensor; }
-	constexpr auto DecayFocus() { return --focusedTicksRemaining == 0; }
-	constexpr auto Focused() const { return focusedTicksRemaining > 0; }
-	constexpr auto StartFocus(int sensor, int n) { focusedSensor = sensor, focusedTicksRemaining = n; }
-	IMonitor* FromPath(string path) const { return monitor.find(head(path))->second.get(); }
 };
 
 // RXMConfigure dialog interface
@@ -1477,7 +1517,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 			break;
 		default: {
 			// "2-column": up to 4 sensors on left, up to 4 sensors on right
-			const auto i = &l - &layouts[0];
+			const auto i = std::distance(layouts, &l);
 			sf.SetAlignment(i < as_integer(LayoutConf::LayoutsPerPage) / 2 ? StringAlignmentNear : StringAlignmentFar);
 			l.Render(rxm, g, f, zones[i & 3], sf), ++rendered;
 			break;
