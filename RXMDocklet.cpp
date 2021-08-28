@@ -96,7 +96,7 @@ using std::string;
 using std::wstring;
 using std::string_view;
 using std::begin, std::end, std::cbegin, std::cend;
-using std::make_unique;
+using std::make_unique, std::unique_ptr;
 
 using namespace std::string_literals;
 
@@ -329,7 +329,7 @@ using sensor_enumeration_t = set<sensor_t>;
 // (generic COMPILE-TIME "get integer value for typesafe enum" function)
 template<class E>
 requires std::is_enum_v<E>
-constexpr auto as_integer(E u) { return static_cast<std::underlying_type_t<E>>(u); }
+constexpr auto as_int(E u) { return static_cast<std::underlying_type_t<E>>(u); }
 
 enum class LayoutConf { Pages = 4, LayoutsPerPage = 8, BackgroundImages = 10 };
 
@@ -454,7 +454,7 @@ public:
 			"F/s", "ms", "GB",
 			"???"
 		};
-		string s{ unitString[as_integer(u)] };
+		string s{ unitString[as_int(u)] };
 		if (u == Degrees)
 			s.push_back(fahrenheit ? 'F' : 'C');
 		return s;
@@ -474,7 +474,7 @@ public:
 			"\000\003\000\001\000\000\003"
 			"\000\000\000"
 			"\000"
-			[as_integer(u)]};
+			[as_int(u)]};
 		/*
 			Use "dynamic precision reduction" to stay within ~4 digits...
 			"fractional digits" width value is a *hint*, not absolute!
@@ -1202,6 +1202,23 @@ static inline auto COLORREF2Color(COLORREF cr)
 struct RXM {
 	using enum LayoutConf;
 
+	const auto CachedBrush(Color c) {
+		const auto argb = c.GetValue();
+		const auto i = brush.find(argb);
+		return i != cend(brush) ?
+			i->second.get() :
+			brush.emplace(
+				argb, make_unique<SolidBrush>(c)).first->second.get();
+	}
+	const auto CachedBrush(COLORREF rgb) { return CachedBrush(COLORREF2Color(rgb)); }
+	const auto CachedPen(Color c) {
+		const auto argb = c.GetValue();
+		const auto i = pen.find(argb);
+		return i != cend(pen) ?
+			i->second.get() :
+			pen.emplace(
+				argb, make_unique<Pen>(c)).first->second.get();
+	}
 	constexpr auto Focus() const { return focusedSensor; }
 	constexpr auto DecayFocus() { return --focusedTicksRemaining == 0; }
 	constexpr auto Focused() const { return focusedTicksRemaining > 0; }
@@ -1217,6 +1234,14 @@ struct RXM {
 	int focusedSensor{};				// alt-click focused sensor #
 	int focusedTicksRemaining{};		// track alt-click focus mode
 	string_monitor_map_t monitor;		// RXM Monitor-specific impls
+										// Gdiplus cached render env
+	StringFormat sf_near{ StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL };
+	StringFormat sf_center{ StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL };
+	StringFormat sf_far{ StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL };
+	Gdiplus::Font f_small{ L"Arial", 15e0F };
+	Gdiplus::Font f_large{ L"Arial", 30e0F };
+	map<ARGB, unique_ptr<SolidBrush>> brush;
+	map<ARGB, unique_ptr<Pen>> pen;
 	struct Layout {
 		string path;					// our sensor
 		COLORREF rgb{ 0 };				// this color
@@ -1244,12 +1269,11 @@ struct RXM {
 						m->SensorValueString(path, rxm->fahrenheit == 1)).c_str());
 				} else
 					trace("Sensor ", path, " is UNDEAD!");
-				const SolidBrush b{ COLORREF2Color(rgb) };
-				g.DrawString(t.c_str(), -1, &f, r, &sf, &b);
+				g.DrawString(t.c_str(), -1, &f, r, &sf, rxm->CachedBrush(rgb));
 			}
 		}
 		auto UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
-	} layout[as_integer(Pages)][as_integer(LayoutsPerPage)];	// sensor layouts (all pages)
+	} layout[as_int(Pages)][as_int(LayoutsPerPage)]; // sensor layouts (all pages)
 };
 
 // RXMConfigure dialog interface
@@ -1265,11 +1289,11 @@ class RXMConfigure : public CDialogEx
 	map<HTREEITEM, sensor_t> pathFromTree;
 	map<sensor_t, HTREEITEM> treeFromPath;
 
-	static constexpr int colorControlID[as_integer(LayoutsPerPage)] {
+	static constexpr int colorControlID[as_int(LayoutsPerPage)] {
 		IDC_COLOR1, IDC_COLOR2, IDC_COLOR3, IDC_COLOR4,
 		IDC_COLOR5, IDC_COLOR6, IDC_COLOR7, IDC_COLOR8
 	};
-	static constexpr int editControlID[as_integer(LayoutsPerPage)] {
+	static constexpr int editControlID[as_int(LayoutsPerPage)] {
 		IDC_SENSOR1, IDC_SENSOR2, IDC_SENSOR3, IDC_SENSOR4,
 		IDC_SENSOR5, IDC_SENSOR6, IDC_SENSOR7, IDC_SENSOR8
 	};
@@ -1282,7 +1306,7 @@ class RXMConfigure : public CDialogEx
 	void locateSensor(int sensor);
 	void unassignSensor(int sensor);
 
-	constexpr auto isFahrenheit() const { return celsiusOrFahrenheit == 1; }
+	constexpr auto isFahrenheit() const { return rxm->fahrenheit == 1; }
 
 public:
 	RXMConfigure() = delete;
@@ -1359,11 +1383,24 @@ constexpr void initializeRXM(RXM* rxm, HWND hwndDocklet, HINSTANCE hInstance)
 	rxm->hwndDocklet = hwndDocklet, rxm->hInstance = hInstance;
 }
 
+static void initializeGdipRenderCache(RXM* rxm)
+{
+	rxm->sf_near.SetTrimming(StringTrimmingNone);
+	rxm->sf_near.SetLineAlignment(StringAlignmentCenter);
+	rxm->sf_near.SetAlignment(StringAlignmentNear);
+	rxm->sf_center.SetTrimming(StringTrimmingNone);
+	rxm->sf_center.SetLineAlignment(StringAlignmentCenter);
+	rxm->sf_center.SetAlignment(StringAlignmentCenter);
+	rxm->sf_far.SetTrimming(StringTrimmingNone);
+	rxm->sf_far.SetLineAlignment(StringAlignmentCenter);
+	rxm->sf_far.SetAlignment(StringAlignmentFar);
+}
+
 static void loadProfile(RXM* rxm, const char* ini, const char* iniGroup)
 {
 	// slurp in sensor, color, and temperature settings
-	for (auto p = 0; p < as_integer(LayoutConf::Pages); ++p)
-		for (auto s = 0; s < as_integer(LayoutConf::LayoutsPerPage); ++s) {
+	for (auto p = 0; p < as_int(LayoutConf::Pages); ++p)
+		for (auto s = 0; s < as_int(LayoutConf::LayoutsPerPage); ++s) {
 			string k1{ std::format("Sensor{}-{}", p + 1, s + 1) };
 			if (char b[MAX_PATH]; ::GetPrivateProfileString(iniGroup, k1.c_str(), "", b, MAX_PATH, ini)) {
 				string k2{ std::format("Color{}-{}", p + 1, s + 1) };
@@ -1374,7 +1411,7 @@ static void loadProfile(RXM* rxm, const char* ini, const char* iniGroup)
 	const auto j = ::GetPrivateProfileInt(iniGroup, "Fahrenheit", 0, ini);
 	rxm->fahrenheit = j == 0 ? 0 : 1;
 	const auto k = ::GetPrivateProfileInt(iniGroup, "Background", 0, ini);
-	rxm->image = __min(__max((int)k, 0), as_integer(LayoutConf::BackgroundImages) - 1);
+	rxm->image = __min(__max((int)k, 0), as_int(LayoutConf::BackgroundImages) - 1);
 }
 
 constexpr auto pageIsActive(RXM* rxm)
@@ -1389,26 +1426,24 @@ static void renderBackground(RXM* rxm)
 	auto bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
 	Graphics g(bm.get());
 	auto drawGrid = [&](auto argb) {
-		Pen p(argb);
+		auto p = rxm->CachedPen(argb);
 		for (auto x = 16; x < 128; x += 16)
-			g.DrawLine(&p, x - 0.5f, -0.5f, x - 0.5f, 127.5f);
+			g.DrawLine(p, x - 0.5f, -0.5f, x - 0.5f, 127.5f);
 		for (auto y = 16; y < 128; y += 16)
-			g.DrawLine(&p, -0.5f, y - 0.5f, 127.5f, y - 0.5f);
+			g.DrawLine(p, -0.5f, y - 0.5f, 127.5f, y - 0.5f);
 	};
 	auto drawRect = [&](auto argb) {
-		Pen p(argb);
-		g.DrawRectangle(&p, 0, 0, 127, 127);
+		g.DrawRectangle(rxm->CachedPen(argb), 0, 0, 127, 127);
 	};
 	auto fillRect = [&](auto argb) {
-		SolidBrush b(argb);
-		g.FillRectangle(&b, 0, 0, 128, 128);
+		g.FillRectangle(rxm->CachedBrush(argb), 0, 0, 128, 128);
 	};
-	static const Color Black = Color(255, 0, 0, 0);
-	static const Color Clear = Color(0, 0, 0, 0);
-	static const Color SoftBlue = Color(128, 0, 128, 255);
-	static const Color SoftGray = Color(128, 0, 0, 0);
-	static const Color White = Color(255, 255, 255, 255);
-	static const Color Yellow = Color(255, 250, 242, 173);
+	static const Color Black{ 255, 0, 0, 0 };
+	static const Color Clear{ 0, 0, 0, 0 };
+	static const Color SoftBlue{ 128, 0, 128, 255 };
+	static const Color SoftGray{ 128, 0, 0, 0 };
+	static const Color White{ 255, 255, 255, 255 };
+	static const Color Yellow{ 255, 250, 242, 173 };
 
 	// [re-]display current background
 	switch (rxm->image) {
@@ -1460,29 +1495,24 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	auto bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
 	Graphics g(bm.get());
 	g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
-	StringFormat sf(StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL);
-	sf.SetTrimming(StringTrimmingNone);
-	sf.SetLineAlignment(StringAlignmentCenter);
 
 	// build rendering environment, part II...
 	auto& layouts = rxm->layout[rxm->page];
 	const auto n = std::count_if(cbegin(layouts), cend(layouts), [](auto& l) { return l.Active(); });
 	const auto n_effective = render == RenderType::StartFocus || rxm->Focused() ? 1 : n;
-	// (construct appropriate Font for below "dynamic" layout)
-	Gdiplus::Font f(L"Arial", n_effective > 2 ? 15e0F : 30e0F);
+	// (select appropriate Font for below "dynamic" layout)
+	auto& f{ n_effective > 2 ? rxm->f_small : rxm->f_large };
 	auto rendered = 0;
 
 	// workhorse lambda for matching click to sensor
 	auto matchRectF = [&](const auto& pt, const auto& sz) {
 		const auto cx = (REAL)sz.cx / 128;
 		const auto cy = (REAL)sz.cy / 128;
-		std::remove_const_t<decltype(zones)> z;
+		std::remove_cvref_t<decltype(zones)> z;
 		std::copy(begin(zones), end(zones), begin(z));
 		for (auto& r : z)
 			r.Width *= cx, r.Height *= cy;
-		const auto x = REAL(pt.x);
-		const auto y = REAL(pt.y);
-		if (n > 2) {
+		if (const auto x = REAL(pt.x), y = REAL(pt.y); n > 2) {
 			for (auto i = 0; i < 4; ++i)
 				if (z[i].Contains(x, y))
 					return pt.x < z[i].Width / 2 ? i : i + 4;
@@ -1503,32 +1533,31 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 
 	// workhorse lambda for "dynamic" layout based on # of active Layouts in the page...
 	auto doSingleLayout = [&](auto& l, auto n) {
+		const auto i = std::distance(layouts, &l);
+		StringFormat& sf{
+			n <= 2 ? rxm->sf_center :
+			i < as_int(LayoutConf::LayoutsPerPage) / 2 ? rxm->sf_near :
+			rxm->sf_far };
 		switch (n) {
 		case 1:
 			// "zoomed": 1 sensor, value on top, unit on bottom
-			sf.SetAlignment(StringAlignmentCenter);
 			l.Render(rxm, g, f, zones[4], sf), ++rendered;
 			l.Render(rxm, g, f, zones[5], sf, true);
 			break;
 		case 2:
 			// "large": 2 sensors, 1 on top, 1 on bottom
-			sf.SetAlignment(StringAlignmentCenter);
 			l.Render(rxm, g, f, zones[rendered ? 5 : 4], sf), ++rendered;
 			break;
-		default: {
+		default:
 			// "2-column": up to 4 sensors on left, up to 4 sensors on right
-			const auto i = std::distance(layouts, &l);
-			sf.SetAlignment(i < as_integer(LayoutConf::LayoutsPerPage) / 2 ? StringAlignmentNear : StringAlignmentFar);
 			l.Render(rxm, g, f, zones[i & 3], sf), ++rendered;
 			break;
-		}
 		}
 	};
 
 	if (rxm->Focused()) {
 		// for single "focused" layout
-		auto& l = layouts[rxm->Focus()];
-		if (l.Active())
+		if (auto& l = layouts[rxm->Focus()]; l.Active())
 			doSingleLayout(l, 1);
 	} else
 		// FOREACH [in-use] Layout on current page...
@@ -1545,8 +1574,8 @@ static void saveProfile(RXM* rxm, const char* ini, const char* iniGroup, bool as
 	if (asDefault)
 		WritePrivateProfileInt(iniGroup, "ForceDockletDefaults", 1, ini);
 	// stash sensor, color, and temperature settings
-	for (auto p = 0; p < as_integer(LayoutConf::Pages); ++p)
-		for (auto s = 0; s < as_integer(LayoutConf::LayoutsPerPage); ++s) {
+	for (auto p = 0; p < as_int(LayoutConf::Pages); ++p)
+		for (auto s = 0; s < as_int(LayoutConf::LayoutsPerPage); ++s) {
 			const auto& l = rxm->layout[p][s];
 			string
 				k1{ std::format("Sensor{}-{}", p + 1, s + 1) },
@@ -1591,6 +1620,8 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 		loadProfile(rxm.get(), ini.data(), iniGroup.data()); // zero-terminated!
 	else if (!rxm->monitor.empty())
 		DockletSetLabel(hwndDocklet, const_cast <char*>("Configure Docklet!"));
+	// ... initialize [GdiPlus] cached rendering env...
+	initializeGdipRenderCache(rxm.get());
 	// ... and set background
 	renderBackground(rxm.get());
 
@@ -1642,7 +1673,7 @@ BOOL CALLBACK OnLeftButtonClick(RXM* rxm, POINT *pt, SIZE *sz)
 		const auto delta = ::GetAsyncKeyState(VK_SHIFT) < 0 ? -1 : 1;
 		const auto i = rxm->page;
 		do
-			rxm->page = (rxm->page + delta) & (as_integer(LayoutConf::Pages) - 1);
+			rxm->page = (rxm->page + delta) & (as_int(LayoutConf::Pages) - 1);
 		while (!pageIsActive(rxm) && rxm->page != i);
 		if (rxm->page != i)
 			renderPage(rxm, RenderType::Forced);
@@ -1791,7 +1822,7 @@ void RXMConfigure::assignSensor(int sensor)
 
 void RXMConfigure::initializeBackgroundList()
 {
-	static const constinit char* b[as_integer(LayoutConf::BackgroundImages)]{
+	static const constinit char* b[as_int(LayoutConf::BackgroundImages)]{
 		"Black",
 		"Clear", "Clear with Border", "Clear with Grid",
 		"White", "White with Border", "White with Grid",
@@ -1992,8 +2023,8 @@ void RXMConfigure::OnTvnGetInfoTipSensorTree(NMHDR *pNMHDR, LRESULT *pResult)
 	if (auto h = pGetInfoTip->hItem; !SensorTree.ItemHasChildren(h)) {
 		const auto& path = pathFromTree[h];
 		const auto m = rxm->FromPath(path);
-		const auto fahrenheit = isFahrenheit();
-		std::format_to_n(pGetInfoTip->pszText, pGetInfoTip->cchTextMax, "{} {}", m->SensorValueString(path, fahrenheit), m->SensorUnitString(path, fahrenheit));
+		const auto isF = isFahrenheit();
+		std::format_to_n(pGetInfoTip->pszText, pGetInfoTip->cchTextMax, "{} {}", m->SensorValueString(path, isF), m->SensorUnitString(path, isF));
 	}
 	*pResult = 0;
 }
