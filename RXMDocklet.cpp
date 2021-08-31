@@ -39,6 +39,7 @@
 #include <memory>
 #include <set>
 #include <map>
+#include <unordered_map>
 #include <vector>
 #include <regex>
 #include <format>
@@ -1180,6 +1181,38 @@ using namespace rxm;
 
 // define our docklet instance data
 
+/*
+	Generic caching implementation for GDI+ objects like Pens, Brushes, etc.
+
+	Use by creating a cache mapping a Gdiplus::ARGB -> some GDI+ object PTR
+
+	std::map<Gdiplus::ARGB, std::unique_ptr<Gdiplus::SolidBrush>> brush;
+
+	... and then instantiate the template by supplying the cache and a Color
+
+	return gdip_caching_impl(brush, c); // returns a Gdiplus::SolidBrush*
+
+	NOW using hip map_type concept to constrain the presumed GDI+ container,
+	as well as requires clause to guarantee the key_type on said container.
+*/
+
+template<typename T>
+concept map_type =
+std::same_as<T, std::map<typename T::key_type, typename T::mapped_type, typename T::key_compare, typename T::allocator_type>> ||
+std::same_as<T, std::unordered_map<typename T::key_type, typename T::mapped_type, typename T::hasher, typename T::key_equal, typename T::allocator_type>>;
+
+template<map_type T>
+requires std::same_as<typename T::key_type, ARGB>
+const auto gdip_caching_impl(T& gdip_container, Color c)
+{
+	const auto argb = c.GetValue();
+	const auto i = gdip_container.find(argb);
+	return i != cend(gdip_container) ?
+		i->second.get() :
+		gdip_container.emplace(
+			argb, make_unique<T::mapped_type::element_type>(c)).first->second.get();
+}
+
 static inline auto COLORREF2Color(COLORREF cr)
 {
 	return Color(GetRValue(cr), GetGValue(cr), GetBValue(cr));
@@ -1202,28 +1235,14 @@ static inline auto COLORREF2Color(COLORREF cr)
 struct RXM {
 	using enum LayoutConf;
 
-	const auto CachedBrush(Color c) {
-		const auto argb = c.GetValue();
-		const auto i = brush.find(argb);
-		return i != cend(brush) ?
-			i->second.get() :
-			brush.emplace(
-				argb, make_unique<SolidBrush>(c)).first->second.get();
-	}
+	const auto CachedBrush(Color c) { return gdip_caching_impl(brush, c); }
 	const auto CachedBrush(COLORREF rgb) { return CachedBrush(COLORREF2Color(rgb)); }
-	const auto CachedPen(Color c) {
-		const auto argb = c.GetValue();
-		const auto i = pen.find(argb);
-		return i != cend(pen) ?
-			i->second.get() :
-			pen.emplace(
-				argb, make_unique<Pen>(c)).first->second.get();
-	}
+	const auto CachedPen(Color c) { return gdip_caching_impl(pen, c); }
 	constexpr auto Focus() const { return focusedSensor; }
 	constexpr auto DecayFocus() { return --focusedTicksRemaining == 0; }
 	constexpr auto Focused() const { return focusedTicksRemaining > 0; }
 	constexpr auto StartFocus(int sensor, int n) { focusedSensor = sensor, focusedTicksRemaining = n; }
-	const auto&& FromPath(string path) const { return monitor.find(head(path))->second.get(); }
+	const auto FromPath(string path) const { return monitor.find(head(path))->second.get(); }
 
 	HWND hwndDocklet{};					// THIS docklet's HWND
 	HINSTANCE hInstance{};				// docklet's DLL HINSTANCE
@@ -1235,6 +1254,8 @@ struct RXM {
 	int focusedTicksRemaining{};		// track alt-click focus mode
 	string_monitor_map_t monitor;		// RXM Monitor-specific impls
 										// Gdiplus cached render env
+	unique_ptr<Bitmap> bg_bm, pg_bm[as_int(Pages)];
+	unique_ptr<Graphics> bg_g, pg_g[as_int(Pages)];
 	StringFormat sf_near{ StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL };
 	StringFormat sf_center{ StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL };
 	StringFormat sf_far{ StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL };
@@ -1385,6 +1406,12 @@ constexpr void initializeRXM(RXM* rxm, HWND hwndDocklet, HINSTANCE hInstance)
 
 static void initializeGdipRenderCache(RXM* rxm)
 {
+	rxm->bg_bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
+	rxm->bg_g = make_unique<Graphics>(rxm->bg_bm.get());
+	for (auto& bm : rxm->pg_bm) {
+		bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
+		rxm->pg_g[std::distance(rxm->pg_bm, &bm)] = make_unique<Graphics>(bm.get());
+	}
 	rxm->sf_near.SetTrimming(StringTrimmingNone);
 	rxm->sf_near.SetLineAlignment(StringAlignmentCenter);
 	rxm->sf_near.SetAlignment(StringAlignmentNear);
@@ -1423,20 +1450,19 @@ constexpr auto pageIsActive(RXM* rxm)
 
 static void renderBackground(RXM* rxm)
 {
-	auto bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
-	Graphics g(bm.get());
-	auto drawGrid = [&](auto argb) {
+	auto& g{ *rxm->bg_g };
+	auto drawGrid = [&](auto& argb) {
 		auto p = rxm->CachedPen(argb);
 		for (auto x = 16; x < 128; x += 16)
 			g.DrawLine(p, x - 0.5f, -0.5f, x - 0.5f, 127.5f);
 		for (auto y = 16; y < 128; y += 16)
 			g.DrawLine(p, -0.5f, y - 0.5f, 127.5f, y - 0.5f);
 	};
-	auto drawRect = [&](auto argb) {
+	auto drawRect = [&](auto& argb) {
 		g.DrawRectangle(rxm->CachedPen(argb), 0, 0, 127, 127);
 	};
-	auto fillRect = [&](auto argb) {
-		g.FillRectangle(rxm->CachedBrush(argb), 0, 0, 128, 128);
+	auto fillRect = [&](auto& argb) {
+		g.Clear(argb);
 	};
 	static const Color Black{ 255, 0, 0, 0 };
 	static const Color Clear{ 0, 0, 0, 0 };
@@ -1469,7 +1495,7 @@ static void renderBackground(RXM* rxm)
 	case 9: fillRect(Yellow); drawRect(SoftBlue); drawGrid(SoftBlue); break;
 	}
 
-	DockletSetImage(rxm->hwndDocklet, bm.release());
+	DockletSetImage(rxm->hwndDocklet, rxm->bg_bm.get(), FALSE);
 }
 
 static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* pt = nullptr, SIZE* sz = nullptr)
@@ -1492,8 +1518,9 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		{ 0, 0, 128, 32 }, { 0, 32, 128, 32 }, { 0, 64, 128, 32 }, { 0, 96, 128, 32 },
 		{ 0, 0, 128, 64 }, { 0, 64, 128, 64 }
 	};
-	auto bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
-	Graphics g(bm.get());
+	auto& g{ *rxm->pg_g[rxm->page] };
+	static const Color zeroed{ 0, 0, 0, 0 };
+	g.Clear(zeroed);
 	g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
 
 	// build rendering environment, part II...
@@ -1565,7 +1592,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 			if (l.Active())
 				doSingleLayout(l, n);
 
-	DockletSetImageOverlay(rxm->hwndDocklet, bm.release());
+	DockletSetImageOverlay(rxm->hwndDocklet, rxm->pg_bm[rxm->page].get(), FALSE);
 }
 
 static void saveProfile(RXM* rxm, const char* ini, const char* iniGroup, bool asDefault = false)
