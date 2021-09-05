@@ -43,6 +43,7 @@
 #include <vector>
 #include <regex>
 #include <format>
+#include <functional>
 
 #include "hwisenssm2.h"
 #include "sdk/DockletSDK.h"
@@ -106,7 +107,7 @@ using RectF = Gdiplus::RectF;
 using Color = Gdiplus::Color;
 
 // (change the following line to true for tracing with ::OutputDebugStringA())
-constexpr auto trace_enabled = true;
+constexpr auto trace_enabled = false;
 
 /*
 	Construct trace message prefix including current "state machine" indicators.
@@ -392,29 +393,35 @@ public:
 /*
 	... common functions and data elements supporting IMonitor IMPLEMENTATIONS
 */
-template<typename T>
 class MonitorCommonImpl : public IMonitor {
 protected:
-	using value_type = T;
 	using enum Unit;
 
 	Mapping mapping;
 	string root, displayName;
 	sensor_enumeration_t sensors;
-	map<sensor_t, value_type> values;
+	map<string, std::function<float(void)>> values;
 	map<sensor_t, Unit> units;
 	RSpinLock lock;
 
 	MonitorCommonImpl(string root, string displayName) : root(root), displayName(displayName) {}
 
-	constexpr auto c2f(double d) const { return floor((d * 9 / 5 + 32) + 0.5); }
+	auto c2f(float f) const { return floor((f * 9 / 5 + 32) + 0.5); }
 	template<class SynchronizedInit>
 	bool refreshImpl(SynchronizedInit f) {
 		std::lock_guard acquire(lock);
 		return f();
 	}
-	template<class RawValueAccess>
-	float sensorValueImpl(string_view path, bool fahrenheit, RawValueAccess f) const {
+
+public:
+	constexpr string DisplayName() const override { return displayName; }
+	constexpr bool RefreshNeeded() const override { return false; }
+	const sensor_enumeration_t& Sensors() const override { return sensors; }
+	Unit SensorUnit(string_view path) const override {
+		const auto&& u = units.find(path);
+		return u != cend(units) ? u->second : None;
+	}
+	float SensorValue(string_view path, bool fahrenheit) const override {
 		float ret = 0;
 		std::lock_guard acquire(const_cast<RSpinLock&>(lock));
 		const auto&& v = values.find(path);
@@ -422,25 +429,14 @@ protected:
 		if (v == cend(values) || u == cend(units))
 			ret = std::numeric_limits<float>::infinity();	// sensor not present
 		else try {
-			double d = f(v->second, u->second);
-			if (u->second == Degrees && fahrenheit)
-				d = c2f(d);
-			ret = (float)d;
-		} catch (...) {
+			ret = (u->second == Degrees && fahrenheit) ? (float)c2f(v->second()) : v->second();
+		}
+		catch (...) {
 			ret = std::numeric_limits<float>::infinity();	// sensor not present
 		}
 		return ret;
 	}
-
-public:
-	constexpr string DisplayName() const override { return displayName; }
-	constexpr bool RefreshNeeded() const override { return false; }
-	const sensor_enumeration_t& Sensors() const override { return sensors; }
-	constexpr Unit SensorUnit(string_view path) const override {
-		const auto&& u = units.find(path);
-		return u != cend(units) ? u->second : None;
-	}
-	constexpr string SensorUnitString(string_view path, bool fahrenheit) const override {
+	string SensorUnitString(string_view path, bool fahrenheit) const override {
 		const auto u = SensorUnit(path);
 		/*
 			display representation for above "universal" units
@@ -460,7 +456,7 @@ public:
 			s.push_back(fahrenheit ? 'F' : 'C');
 		return s;
 	}
-	constexpr string SensorValueString(string_view path, bool fahrenheit) const override {
+	string SensorValueString(string_view path, bool fahrenheit) const override {
 		const auto u = SensorUnit(path);
 		const auto v = SensorValue(path, fahrenheit);
 		/*
@@ -498,7 +494,7 @@ public:
 /*
 	Implementation of IMonitor for MSI Afterburner
 */
-class ABMonitor : public MonitorCommonImpl<const float*> {
+class ABMonitor : public MonitorCommonImpl {
 	using enum Unit;
 
 #pragma pack(push, 1)
@@ -555,9 +551,6 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create("MAHMSharedMemory") && enumerateSensors() > 0; });
 	}
-	float SensorValue(string_view path, bool fahrenheit = false) const override {
-		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
-	}
 };
 
 auto ABMonitor::unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const
@@ -599,7 +592,7 @@ int ABMonitor::enumerateSensors()
 				path += "pc";
 			std::format_to(std::back_inserter(path), "|{}", r.szSrcName);
 			sensors.insert(path);
-			values[path] = &r.data, units[path] = u;
+			values[path] = [&r]() { return r.data; }, units[path] = u;
 			::OutputDebugString(path.c_str());
 		}
 	}
@@ -611,7 +604,7 @@ int ABMonitor::enumerateSensors()
 /*
 	Implementation of IMonitor for Core Temp
 */
-class CTMonitor : public MonitorCommonImpl<const float*> {
+class CTMonitor : public MonitorCommonImpl {
 	using enum Unit;
 
 #pragma pack(push, 1)
@@ -649,14 +642,6 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create("CoreTempMappingObjectEx") && enumerateSensors() > 0; });
 	}
-	float SensorValue(string_view path, bool fahrenheit = false) const override {
-		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) {
-			const auto& c = ct();
-			return u == Degrees ?
-				(c.ucDeltaToTjMax ? c.uiTjMax[0] - *i : *i) :
-				*(const unsigned int*)i;
-		});
-	}
 };
 
 int CTMonitor::enumerateSensors()
@@ -665,20 +650,33 @@ int CTMonitor::enumerateSensors()
 	sensors.clear(), values.clear(), units.clear();
 	const auto& c = ct();
 
-	if (c.uiStructVersion != 2)
-		return 0; // nothing to see here...
-
-	for (decltype(c.uiCPUCnt) cpu = 0; cpu < c.uiCPUCnt; ++cpu)
-		for (decltype(c.uiCoreCnt) core = 0; core < c.uiCoreCnt; ++core) {
-			auto off = [c](auto i, auto j) { return c.uiCoreCnt * i + j; };
-			const auto corePath{ std::format("{}|CPU [#{}]: {}|Core #{}", root, cpu, c.sCPUName, core) };
+	for (decltype(c.uiCPUCnt) cpu = 0; cpu < c.uiCPUCnt; ++cpu) {
+		auto off = c.uiCoreCnt * cpu;
+		const auto cpuPath{ std::format("{}|CPU [#{}]: {}|", root, cpu, c.sCPUName) };
+		const auto vidPath{ cpuPath + "VID" };
+		sensors.insert(vidPath), values[vidPath] = [&c]() { return c.fVID; }, units[vidPath] = Volts;
+		if (c.uiStructVersion >= 2 && c.ucTdpSupported) {
+			const auto tdpPath{ cpuPath + "TDP" };
+			sensors.insert(tdpPath), values[tdpPath] = [off, &c]() { return (float)c.uiTdp[off]; }, units[tdpPath] = Watts;
+		}
+		if (c.uiStructVersion >= 2 && c.ucPowerSupported) {
+			const auto powerPath{ cpuPath + "Power" };
+			sensors.insert(powerPath), values[powerPath] = [off, &c]() { return c.fPower[off]; }, units[powerPath] = Watts;
+		}
+		for (decltype(c.uiCoreCnt) core = 0; core < c.uiCoreCnt; ++core, ++off) {
+			const auto corePath{ std::format("{}Core #{}", cpuPath, core) };
 			const auto tempPath{ corePath + " Temperature" };
-			sensors.insert(tempPath), values[tempPath] = c.fTemp + off(cpu, core), units[tempPath] = Degrees;
+			sensors.insert(tempPath), units[tempPath] = Degrees;
+			if (c.ucDeltaToTjMax)
+				values[tempPath] = [off, &c]() { return c.uiTjMax[0] - c.fTemp[off]; };
+			else
+				values[tempPath] = [off, &c]() { return c.fTemp[off]; };
 			::OutputDebugString(tempPath.c_str());
 			const auto loadPath{ corePath + " Load" };
-			sensors.insert(loadPath), values[loadPath] = (value_type)(c.uiLoad + off(cpu, core)), units[loadPath] = UsagePerCent;
+			sensors.insert(loadPath), values[loadPath] = [off, &c]() { return (float)c.uiLoad[off]; }, units[loadPath] = UsagePerCent;
 			::OutputDebugString(loadPath.c_str());
 		}
+	}
 
 	trace("CTMonitor found ", sensors.size(), " sensors");
 	return sensors.size();
@@ -687,7 +685,7 @@ int CTMonitor::enumerateSensors()
 /*
 	Implementation of IMonitor for GPU-Z
 */
-class GPUZMonitor : public MonitorCommonImpl<const double*> {
+class GPUZMonitor : public MonitorCommonImpl {
 	using enum Unit;
 	enum { MaxRecords = 128 };
 
@@ -724,9 +722,6 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create("GPUZShMem") && enumerateSensors() > 0; });
 	}
-	float SensorValue(string_view path, bool fahrenheit = false) const override {
-		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
-	}
 };
 
 auto GPUZMonitor::unitFromRecord(const SensorRecord& r) const
@@ -756,7 +751,7 @@ int GPUZMonitor::enumerateSensors()
 		if (const auto u = unitFromRecord(s); u != None) {
 			const auto path{ std::format("{}|{}|{}", root, deviceName, utf8StringFromUTF16(s.name)) };
 			sensors.insert(path);
-			values[path] = &s.value, units[path] = u;
+			values[path] = [&s]() { return (float)s.value; }, units[path] = u;
 			::OutputDebugString(path.c_str());
 		}
 	}
@@ -768,7 +763,7 @@ int GPUZMonitor::enumerateSensors()
 /*
 	Implementation of IMonitor for HWiNFO
 */
-class HWiMonitor : public MonitorCommonImpl<DWORD> {
+class HWiMonitor : public MonitorCommonImpl {
 	using enum Unit;
 
 	int enumerateSensors();
@@ -791,12 +786,9 @@ public:
 		const auto& h = hwi();
 		return h.dwNumSensorElements != origSensors || h.dwNumReadingElements != origReadings;
 	}
-	float SensorValue(string_view path, bool fahrenheit = false) const override {
-		return sensorValueImpl(path, fahrenheit, [this](auto i, Unit u) { return rE(i).Value; });
-	}
 	string SensorValueString(string_view path, bool fahrenheit = false) const override {
 		if (SensorUnit(path) == YorN)
-			return SensorValue(path) != 0 ? "Yes" : "No";
+			return SensorValue(path, fahrenheit) != 0 ? "Yes" : "No";
 		else
 			return MonitorCommonImpl::SensorValueString(path, fahrenheit);
 	}
@@ -862,7 +854,7 @@ int HWiMonitor::enumerateSensors()
 			if (r.szUnit[0])
 				std::format_to(std::back_inserter(path), " {}", r.szUnit);
 			sensors.insert(path);
-			values[path] = i, units[path] = u;
+			values[path] = [&r]() { return (float)r.Value; }, units[path] = u;
 			::OutputDebugString(path.c_str());
 		}
 	}
@@ -878,7 +870,7 @@ int HWiMonitor::enumerateSensors()
 	appear to have "locked down" the shared memory interface such that only
 	zeros are returned.
 */
-class HWMonitor : public MonitorCommonImpl<const float*> {
+class HWMonitor : public MonitorCommonImpl {
 	enum { MaxGroups = 10 };				// HW Monitor 1.14-1.16 (1.13 was 9)
 
 	typedef struct {
@@ -934,9 +926,6 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create("$CPUID$HWM$") && enumerateSensors() > 0; });
 	}
-	float SensorValue(string_view path, bool fahrenheit = false) const override {
-		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) { return *i; });
-	}
 };
 
 auto HWMonitor::unitFromDGS(int d, int g, int s) const {
@@ -966,8 +955,8 @@ int HWMonitor::enumerateSensors()
 				// N.B. - ONLY CPUID Hardware Monitor needs this "extra" level
 				std::format_to(std::back_inserter(path), "|{}|{}", groupType(g), sensorLabel(d, g, s));
 				sensors.insert(path);
-				values[path] = &node(d, g, s).value;
-				units[path] = unitFromDGS(d, g, s);
+				const auto& r{ node(d, g, s) };
+				values[path] = [&r]() { return r.value; }, units[path] = unitFromDGS(d, g, s);
 				::OutputDebugString((dgs(d, g, s) + '=' + path).c_str());
 			}
 	}
@@ -983,7 +972,7 @@ int HWMonitor::enumerateSensors()
 	incorrect - as these show this way in the SpeedFan app itself, they are
 	of course passed on by RXMDocklet... YMMV, of course.
 */
-class SFMonitor : public MonitorCommonImpl<const int*> {
+class SFMonitor : public MonitorCommonImpl {
 	enum { Temps = 32, Fans = 32, Voltages = 32 };
 	enum ParseState {
 		WantVer, WantTag, WantDeviceName, WantTempName, WantFanName, WantVoltName, WantEnd
@@ -1039,11 +1028,6 @@ public:
 	bool Refresh() override {
 		return refreshImpl([this]() { return mapping.Create("SFSharedMemory_ALM") && enumerateSensors() > 0; });
 	}
-	float SensorValue(string_view path, bool fahrenheit = false) const override {
-		return sensorValueImpl(path, fahrenheit, [](auto i, Unit u) {
-			return u != RPM ? (double)*i / 100 : (double)*i;
-		});
-	}
 };
 
 int SFMonitor::enumerateSensors()
@@ -1095,7 +1079,8 @@ int SFMonitor::enumerateSensors()
 		case WantTempName:
 			if (strncmp(line, cfgSensorNameTag, cfgSensorNameTagN) == 0) {
 				const auto path{ std::format("{}|{}|<temperatures>|{}", root, devices[longName], line + cfgSensorNameTagN) };
-				values[path] = &sf().temps[temps++], units[path] = Degrees;
+				const auto& t{ sf().temps[temps++] };
+				values[path] = [&t]() { return (float)t / 100; }, units[path] = Degrees;
 				sensors.insert(path);
 				::OutputDebugString(path.c_str());
 				state = WantEnd;
@@ -1105,7 +1090,8 @@ int SFMonitor::enumerateSensors()
 		case WantFanName:
 			if (strncmp(line, cfgSensorNameTag, cfgSensorNameTagN) == 0) {
 				const auto path{ std::format("{}|{}|<fans>|{}", root, devices[longName], line + cfgSensorNameTagN) };
-				values[path] = &sf().fans[fans++], units[path] = RPM;
+				const auto& f{ sf().fans[fans++] };
+				values[path] = [&f]() { return (float)f; }, units[path] = RPM;
 				sensors.insert(path);
 				::OutputDebugString(path.c_str());
 				state = WantEnd;
@@ -1117,7 +1103,8 @@ int SFMonitor::enumerateSensors()
 				const auto path{ std::format("{}|{}|<voltages>|{}", root, devices[longName], line + cfgSensorNameTagN) };
 				// UGLY HACK to deal with SpeedFan [config?] problem
 				if (!sensors.contains(path)) {
-					values[path] = &sf().volts[volts++], units[path] = Volts;
+					const auto& v{ sf().volts[volts++] };
+					values[path] = [&v]() { return (float)v / 100; }, units[path] = Volts;
 					sensors.insert(path);
 					::OutputDebugString(path.c_str());
 				} else
@@ -1206,7 +1193,7 @@ requires std::same_as<typename T::key_type, ARGB>
 const auto gdip_caching_impl(T& gdip_container, Color c)
 {
 	const auto argb = c.GetValue();
-	const auto i = gdip_container.find(argb);
+	const auto&& i = gdip_container.find(argb);
 	return i != cend(gdip_container) ?
 		i->second.get() :
 		gdip_container.emplace(
@@ -1714,7 +1701,7 @@ void CALLBACK OnProcessMessage(RXM* rxm, HWND hwnd, UINT uMsg, WPARAM wParam, LP
 	switch (uMsg) {
 	// WM_TIMER: update sensor display(s) AS REQUIRED
 	case WM_TIMER:
-		if (wParam == 43)
+		if (wParam == 43 && DockletIsVisible(hwnd))
 			renderPage(rxm, rxm->Focused() && rxm->DecayFocus() ? RenderType::EndFocus : RenderType::Normal);
 		break;
 
