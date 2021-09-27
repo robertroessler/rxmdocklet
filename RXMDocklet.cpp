@@ -422,7 +422,7 @@ public:
 		return u != cend(units) ? u->second : None;
 	}
 	float SensorValue(string_view path, bool fahrenheit) const override {
-		float ret = 0;
+		float ret{};
 		std::lock_guard acquire(const_cast<RSpinLock&>(lock));
 		const auto&& v = values.find(path);
 		const auto&& u = units.find(path);
@@ -780,7 +780,7 @@ public:
 	~HWiMonitor() override {}
 
 	bool Refresh() override {
-		return refreshImpl([this]() { return mapping.Create("" HWiNFO_SENSORS_MAP_FILE_NAME2) && enumerateSensors() > 0; });
+		return refreshImpl([this]() { return mapping.Create(HWiNFO_SENSORS_MAP_FILE_NAME2) && enumerateSensors() > 0; });
 	}
 	bool RefreshNeeded() const override {
 		const auto& h = hwi();
