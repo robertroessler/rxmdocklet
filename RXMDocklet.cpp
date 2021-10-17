@@ -106,6 +106,9 @@ using namespace std::string_literals;
 using RectF = Gdiplus::RectF;
 using Color = Gdiplus::Color;
 
+// set default sensor polling period (in ms)
+constexpr auto polling_period = 2000;
+
 // (change the following line to true for tracing with ::OutputDebugStringA())
 constexpr auto trace_enabled = false;
 
@@ -396,21 +399,29 @@ public:
 class MonitorCommonImpl : public IMonitor {
 protected:
 	using enum Unit;
+	using Value = std::function<float(void)>;
 
 	Mapping mapping;
 	string root, displayName;
 	sensor_enumeration_t sensors;
-	map<string, std::function<float(void)>> values;
-	map<sensor_t, Unit> units;
+	map<string_view, Value> values;
+	map<string_view, Unit> units;
 	RSpinLock lock;
 
+	MonitorCommonImpl() = delete;
 	MonitorCommonImpl(string root, string displayName) : root(root), displayName(displayName) {}
 
-	auto c2f(float f) const { return floor((f * 9 / 5 + 32) + 0.5); }
 	template<class SynchronizedInit>
 	bool refreshImpl(SynchronizedInit f) {
 		std::lock_guard acquire(lock);
 		return f();
+	}
+	// N.B. - supplied sensor path "consumed" by std::move!
+	void use_sensor(sensor_t& p, Value v, Unit u) {
+		const auto&& r = sensors.insert(std::move(p));
+		const auto&& k = string_view(*r.first);
+		values[k] = v, units[k] = u;
+		trace(k);
 	}
 
 public:
@@ -429,6 +440,7 @@ public:
 		if (v == cend(values) || u == cend(units))
 			ret = std::numeric_limits<float>::infinity();	// sensor not present
 		else try {
+			auto c2f = [](auto f) { return floor((f * 9 / 5 + 32) + 0.5); };
 			ret = (u->second == Degrees && fahrenheit) ? (float)c2f(v->second()) : v->second();
 		}
 		catch (...) {
@@ -437,7 +449,7 @@ public:
 		return ret;
 	}
 	string SensorUnitString(string_view path, bool fahrenheit) const override {
-		const auto u = SensorUnit(path);
+		const auto&& u = SensorUnit(path);
 		/*
 			display representation for above "universal" units
 
@@ -457,8 +469,8 @@ public:
 		return s;
 	}
 	string SensorValueString(string_view path, bool fahrenheit) const override {
-		const auto u = SensorUnit(path);
-		const auto v = SensorValue(path, fahrenheit);
+		const auto&& u = SensorUnit(path);
+		const auto&& v = SensorValue(path, fahrenheit);
 		/*
 			# of fractional digits to display for above "universal" units
 
@@ -567,7 +579,7 @@ auto ABMonitor::unitFromRecord(const MAHM_SHARED_MEMORY_ENTRY& r) const
 
 int ABMonitor::enumerateSensors()
 {
-	::OutputDebugString("ABMonitor::enumerateSensors...");
+	trace("ABMonitor::enumerateSensors...");
 	sensors.clear(), values.clear(), units.clear();
 	const auto& a = ab();
 
@@ -591,9 +603,7 @@ int ABMonitor::enumerateSensors()
 			} else
 				path += "pc";
 			std::format_to(std::back_inserter(path), "|{}", r.szSrcName);
-			sensors.insert(path);
-			values[path] = [&r]() { return r.data; }, units[path] = u;
-			::OutputDebugString(path.c_str());
+			use_sensor(path, [&r]() { return r.data; }, u);
 		}
 	}
 
@@ -646,35 +656,34 @@ public:
 
 int CTMonitor::enumerateSensors()
 {
-	::OutputDebugString("CTMonitor::enumerateSensors...");
+	trace("CTMonitor::enumerateSensors...");
 	sensors.clear(), values.clear(), units.clear();
 	const auto& c = ct();
 
 	for (decltype(c.uiCPUCnt) cpu = 0; cpu < c.uiCPUCnt; ++cpu) {
 		auto off = c.uiCoreCnt * cpu;
 		const auto cpuPath{ std::format("{}|CPU [#{}]: {}|", root, cpu, c.sCPUName) };
-		const auto vidPath{ cpuPath + "VID" };
-		sensors.insert(vidPath), values[vidPath] = [&c]() { return c.fVID; }, units[vidPath] = Volts;
+		auto vidPath{ cpuPath + "VID" };
+		use_sensor(vidPath, [&c]() { return c.fVID; }, Volts);
 		if (c.uiStructVersion >= 2 && c.ucTdpSupported) {
-			const auto tdpPath{ cpuPath + "TDP" };
-			sensors.insert(tdpPath), values[tdpPath] = [off, &c]() { return (float)c.uiTdp[off]; }, units[tdpPath] = Watts;
+			auto tdpPath{ cpuPath + "TDP" };
+			use_sensor(tdpPath, [off, &c]() { return (float)c.uiTdp[off]; }, Watts);
 		}
 		if (c.uiStructVersion >= 2 && c.ucPowerSupported) {
-			const auto powerPath{ cpuPath + "Power" };
-			sensors.insert(powerPath), values[powerPath] = [off, &c]() { return c.fPower[off]; }, units[powerPath] = Watts;
+			auto powerPath{ cpuPath + "Power" };
+			use_sensor(powerPath, [off, &c]() { return c.fPower[off]; }, Watts);
 		}
 		for (decltype(c.uiCoreCnt) core = 0; core < c.uiCoreCnt; ++core, ++off) {
 			const auto corePath{ std::format("{}Core #{}", cpuPath, core) };
-			const auto tempPath{ corePath + " Temperature" };
-			sensors.insert(tempPath), units[tempPath] = Degrees;
+			auto tempPath{ corePath + " Temperature" };
+			Value v;
 			if (c.ucDeltaToTjMax)
-				values[tempPath] = [off, &c]() { return c.uiTjMax[0] - c.fTemp[off]; };
+				v = [off, &c]() { return c.uiTjMax[0] - c.fTemp[off]; };
 			else
-				values[tempPath] = [off, &c]() { return c.fTemp[off]; };
-			::OutputDebugString(tempPath.c_str());
-			const auto loadPath{ corePath + " Load" };
-			sensors.insert(loadPath), values[loadPath] = [off, &c]() { return (float)c.uiLoad[off]; }, units[loadPath] = UsagePerCent;
-			::OutputDebugString(loadPath.c_str());
+				v = [off, &c]() { return c.fTemp[off]; };
+			use_sensor(tempPath, v, Degrees);
+			auto loadPath{ corePath + " Load" };
+			use_sensor(loadPath, [off, &c]() { return (float)c.uiLoad[off]; }, UsagePerCent);
 		}
 	}
 
@@ -736,7 +745,7 @@ auto GPUZMonitor::unitFromRecord(const SensorRecord& r) const
 
 int GPUZMonitor::enumerateSensors()
 {
-	::OutputDebugString("GPUZMonitor::enumerateSensors...");
+	trace("GPUZMonitor::enumerateSensors...");
 	sensors.clear(), values.clear(), units.clear();
 	const auto& g = gpuz();
 
@@ -749,10 +758,8 @@ int GPUZMonitor::enumerateSensors()
 		if (s.name[0] == L'\0')
 			break;	// nothing more to examine
 		if (const auto u = unitFromRecord(s); u != None) {
-			const auto path{ std::format("{}|{}|{}", root, deviceName, utf8StringFromUTF16(s.name)) };
-			sensors.insert(path);
-			values[path] = [&s]() { return (float)s.value; }, units[path] = u;
-			::OutputDebugString(path.c_str());
+			auto path{ std::format("{}|{}|{}", root, deviceName, utf8StringFromUTF16(s.name)) };
+			use_sensor(path, [&s]() { return (float)s.value; }, u);
 		}
 	}
 
@@ -831,7 +838,7 @@ auto HWiMonitor::unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const
 
 int HWiMonitor::enumerateSensors()
 {
-	::OutputDebugString("HWiMonitor::enumerateSensors...");
+	trace("HWiMonitor::enumerateSensors...");
 	// create a "sensorNameFromInstanceNumber"
 	auto computedSensorName = [](auto s) {
 		string deviceName{ s.szSensorNameUser };
@@ -853,9 +860,7 @@ int HWiMonitor::enumerateSensors()
 			auto path{ std::format("{}|{}|{}", root, computedSensorName(s), r.szLabelUser) };
 			if (r.szUnit[0])
 				std::format_to(std::back_inserter(path), " {}", r.szUnit);
-			sensors.insert(path);
-			values[path] = [&r]() { return (float)r.Value; }, units[path] = u;
-			::OutputDebugString(path.c_str());
+			use_sensor(path, [&r]() { return (float)r.Value; }, u);
 		}
 	}
 
@@ -939,7 +944,7 @@ int HWMonitor::enumerateSensors()
 	auto dgs = [](auto d, auto g, auto s) {
 		return std::format("{},{},{}", d, g, s);
 	};
-	::OutputDebugString("HWMonitor::enumerateSensors...");
+	trace("HWMonitor::enumerateSensors...");
 	std::multiset<string> devices;
 	sensors.clear(), values.clear(), units.clear();
 
@@ -954,10 +959,8 @@ int HWMonitor::enumerateSensors()
 					std::format_to(std::back_inserter(path), " #{}", dupes);
 				// N.B. - ONLY CPUID Hardware Monitor needs this "extra" level
 				std::format_to(std::back_inserter(path), "|{}|{}", groupType(g), sensorLabel(d, g, s));
-				sensors.insert(path);
 				const auto& r{ node(d, g, s) };
-				values[path] = [&r]() { return r.value; }, units[path] = unitFromDGS(d, g, s);
-				::OutputDebugString((dgs(d, g, s) + '=' + path).c_str());
+				use_sensor(path, [&r]() { return r.value; }, unitFromDGS(d, g, s));
 			}
 	}
 
@@ -1032,7 +1035,7 @@ public:
 
 int SFMonitor::enumerateSensors()
 {
-	::OutputDebugString("SFMonitor::enumerateSensors...");
+	trace("SFMonitor::enumerateSensors...");
 	sensors.clear(), values.clear(), units.clear();
 	const string sfPath = getExecutableDir(speedFanExecutable);
 	if (sfPath.empty())
@@ -1078,37 +1081,31 @@ int SFMonitor::enumerateSensors()
 
 		case WantTempName:
 			if (strncmp(line, cfgSensorNameTag, cfgSensorNameTagN) == 0) {
-				const auto path{ std::format("{}|{}|<temperatures>|{}", root, devices[longName], line + cfgSensorNameTagN) };
+				auto path{ std::format("{}|{}|<temperatures>|{}", root, devices[longName], line + cfgSensorNameTagN) };
 				const auto& t{ sf().temps[temps++] };
-				values[path] = [&t]() { return (float)t / 100; }, units[path] = Degrees;
-				sensors.insert(path);
-				::OutputDebugString(path.c_str());
+				use_sensor(path, [&t]() { return (float)t / 100; }, Degrees);
 				state = WantEnd;
 			}
 			break;
 
 		case WantFanName:
 			if (strncmp(line, cfgSensorNameTag, cfgSensorNameTagN) == 0) {
-				const auto path{ std::format("{}|{}|<fans>|{}", root, devices[longName], line + cfgSensorNameTagN) };
+				auto path{ std::format("{}|{}|<fans>|{}", root, devices[longName], line + cfgSensorNameTagN) };
 				const auto& f{ sf().fans[fans++] };
-				values[path] = [&f]() { return (float)f; }, units[path] = RPM;
-				sensors.insert(path);
-				::OutputDebugString(path.c_str());
+				use_sensor(path, [&f]() { return (float)f; }, RPM);
 				state = WantEnd;
 			}
 			break;
 
 		case WantVoltName:
 			if (strncmp(line, cfgSensorNameTag, cfgSensorNameTagN) == 0) {
-				const auto path{ std::format("{}|{}|<voltages>|{}", root, devices[longName], line + cfgSensorNameTagN) };
+				auto path{ std::format("{}|{}|<voltages>|{}", root, devices[longName], line + cfgSensorNameTagN) };
 				// UGLY HACK to deal with SpeedFan [config?] problem
 				if (!sensors.contains(path)) {
 					const auto& v{ sf().volts[volts++] };
-					values[path] = [&v]() { return (float)v / 100; }, units[path] = Volts;
-					sensors.insert(path);
-					::OutputDebugString(path.c_str());
+					use_sensor(path, [&v]() { return (float)v / 100; }, Volts);
 				} else
-					::OutputDebugString(("Rejected as dupe: " + path).c_str());
+					trace("Rejected as dupe: ", path);
 				state = WantEnd;
 			}
 			break;
@@ -1395,7 +1392,7 @@ static void initializeGdipRenderCache(RXM* rxm)
 {
 	rxm->bg_bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
 	rxm->bg_g = make_unique<Graphics>(rxm->bg_bm.get());
-	for (auto& bm : rxm->pg_bm) {
+	for (auto&& bm : rxm->pg_bm) {
 		bm = make_unique<Bitmap>(128, 128, PixelFormat32bppARGB);
 		rxm->pg_g[std::distance(rxm->pg_bm, &bm)] = make_unique<Graphics>(bm.get());
 	}
@@ -1437,7 +1434,7 @@ constexpr auto pageIsActive(RXM* rxm)
 
 static void renderBackground(RXM* rxm)
 {
-	auto& g{ *rxm->bg_g };
+	auto&& g{ *rxm->bg_g };
 	auto drawGrid = [&](auto& argb) {
 		auto p = rxm->CachedPen(argb);
 		for (auto x = 16; x < 128; x += 16)
@@ -1524,7 +1521,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		const auto cy = (REAL)sz.cy / 128;
 		std::remove_cvref_t<decltype(zones)> z;
 		std::copy(begin(zones), end(zones), begin(z));
-		for (auto& r : z)
+		for (auto&& r : z)
 			r.Width *= cx, r.Height *= cy;
 		if (const auto x = REAL(pt.x), y = REAL(pt.y); n > 2) {
 			for (auto i = 0; i < 4; ++i)
@@ -1571,11 +1568,11 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 
 	if (rxm->Focused()) {
 		// for single "focused" layout
-		if (auto& l = layouts[rxm->Focus()]; l.Active())
+		if (auto&& l = layouts[rxm->Focus()]; l.Active())
 			doSingleLayout(l, 1);
 	} else
 		// FOREACH [in-use] Layout on current page...
-		for (auto& l : layouts)
+		for (auto&& l : layouts)
 			if (l.Active())
 				doSingleLayout(l, n);
 
@@ -1610,7 +1607,7 @@ static void saveProfile(RXM* rxm, const char* ini, const char* iniGroup, bool as
 
 RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, char *szIniGroup)
 {
-	::OutputDebugString("OnCreateRXM...");
+	trace("OnCreateRXM...");
 	auto rxm = make_unique<RXM>();
 	initializeRXM(rxm.get(), hwndDocklet, hInstance);
 
@@ -1622,7 +1619,7 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 	rxm->monitor.emplace("HWM", make_unique<HWMonitor>("HWM", "HWMonitor"));
 	rxm->monitor.emplace("SF", make_unique<SFMonitor>("SF", "SpeedFan"));
 	// ... and initialize the ones that are [initially] present
-	for (auto& [_, m] : rxm->monitor)
+	for (auto&& [_, m] : rxm->monitor)
 		m->Refresh();
 
 	if (rxm->monitor.empty())
@@ -1643,13 +1640,13 @@ RXM* CALLBACK OnCreateRXM(HWND hwndDocklet, HINSTANCE hInstance, char *szIni, ch
 	renderPage(rxm.get());
 
 	// ... and start timer so it happens periodically
-	rxm->timer = ::SetTimer(hwndDocklet, 43, 1*1000, nullptr);
+	rxm->timer = ::SetTimer(hwndDocklet, 43, polling_period, nullptr);
 	return rxm.release();
 }
 
 void CALLBACK OnDestroyRXM(RXM* rxm, HWND hwndDocklet)
 {
-	::OutputDebugString("OnDestroyRXM...");
+	trace("OnDestroyRXM...");
 	// whack timer AS REQUIRED
 	if (rxm->timer > 0)
 		::KillTimer(rxm->hwndDocklet, rxm->timer);
@@ -1708,7 +1705,7 @@ void CALLBACK OnProcessMessage(RXM* rxm, HWND hwnd, UINT uMsg, WPARAM wParam, LP
 	// WM_POWERBROADCAST: on resume, re-enumerate sensors AS REQUIRED
 	case WM_POWERBROADCAST:
 		if (wParam == PBT_APMRESUMEAUTOMATIC)
-			for (auto& [_, m] : rxm->monitor)
+			for (auto&& [_, m] : rxm->monitor)
 				m->Refresh();
 		break;
 	}
@@ -1755,7 +1752,7 @@ BOOL CALLBACK OnRightButtonClick(RXM* rxm, POINT *ptCursor, SIZE *sizeDocklet)
 	}
 	case 2:
 		// "refresh" (actually, re-enumerate) Monitors
-		for (auto& [_, m] : rxm->monitor)
+		for (auto&& [_, m] : rxm->monitor)
 			m->Refresh();
 		rv = TRUE;
 		break;
@@ -1811,7 +1808,7 @@ void RXMConfigure::DoDataExchange(CDataExchange* pDX)
 
 void RXMConfigure::assignColor(int sensor)
 {
-	auto& l = rxm->layout[rxm->page][sensor];
+	auto&& l = rxm->layout[rxm->page][sensor];
 	if (!l.Active())
 		return;	// nothing to do
 
@@ -1851,7 +1848,7 @@ void RXMConfigure::initializeBackgroundList()
 
 void RXMConfigure::initializeSensors()
 {
-	for (auto& l : rxm->layout[rxm->page])
+	for (auto&& l : rxm->layout[rxm->page])
 		if (const auto sensor = std::distance(rxm->layout[rxm->page], &l); l.Active()) {
 			// display this sensor's color...
 			((CMFCColorButton*)GetDlgItem(colorControlID[sensor]))->SetColor(l.rgb);
@@ -2014,7 +2011,7 @@ BOOL RXMConfigure::OnInitDialog()
 	UpdateData(FALSE);
 
 	// "locate" 1st in-use sensor in tree
-	for (auto& l : rxm->layout[0])
+	for (auto&& l : rxm->layout[0])
 		if (l.Active())
 			return locateSensor(std::distance(rxm->layout[0], &l)), FALSE;
 
