@@ -105,9 +105,10 @@ using namespace std::string_literals;
 // (resolve ambiguity with D2D declaration)
 using RectF = Gdiplus::RectF;
 using Color = Gdiplus::Color;
+using PointF = Gdiplus::PointF;
 
 // set default sensor polling period (in ms)
-constexpr auto polling_period = 2000;
+constexpr auto polling_period = 1000;
 
 // (change the following line to true for tracing with ::OutputDebugStringA())
 constexpr auto trace_enabled = false;
@@ -1269,9 +1270,9 @@ struct RXM {
 					if (m->RefreshNeeded())
 						m->Refresh();
 					last = m->SensorValue(path);
-					t = utf16StringFromUTF8((unitString ?
+					t = std::move(utf16StringFromUTF8((unitString ?
 						m->SensorUnitString(path,  rxm->fahrenheit == 1):
-						m->SensorValueString(path, rxm->fahrenheit == 1)).c_str());
+						m->SensorValueString(path, rxm->fahrenheit == 1)).c_str()));
 				} else
 					trace("Sensor ", path, " is UNDEAD!");
 				g.DrawString(t.c_str(), -1, &f, r, &sf, rxm->CachedBrush(rgb));
@@ -1513,23 +1514,20 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	const auto n_effective = render == RenderType::StartFocus || rxm->Focused() ? 1 : n;
 	// (select appropriate Font for below "dynamic" layout)
 	auto& f{ n_effective > 2 ? rxm->f_small : rxm->f_large };
-	auto rendered = 0;
 
 	// workhorse lambda for matching click to sensor
 	auto matchRectF = [&](const auto& pt, const auto& sz) {
-		const auto cx = (REAL)sz.cx / 128;
-		const auto cy = (REAL)sz.cy / 128;
 		std::remove_cvref_t<decltype(zones)> z;
 		std::copy(begin(zones), end(zones), begin(z));
-		for (auto&& r : z)
+		for (const auto cx{ (REAL)sz.cx / 128 }, cy{ (REAL)sz.cy / 128 }; auto&& r : z)
 			r.Width *= cx, r.Height *= cy;
-		if (const auto x = REAL(pt.x), y = REAL(pt.y); n > 2) {
+		if (const PointF ptF{ (REAL)pt.x, (REAL)pt.y }; n > 2) {
 			for (auto i = 0; i < 4; ++i)
-				if (z[i].Contains(x, y))
+				if (z[i].Contains(ptF))
 					return pt.x < z[i].Width / 2 ? i : i + 4;
 		} else
 			for (auto i = 4; i < 6; ++i)
-				if (z[i].Contains(x, y))
+				if (z[i].Contains(ptF))
 					return i == 4 ? 0 : 1;
 		return -1; // (indicate NO match found)
 	};
@@ -1543,7 +1541,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 	}
 
 	// workhorse lambda for "dynamic" layout based on # of active Layouts in the page...
-	auto doSingleLayout = [&](auto& l, auto n) {
+	auto doSingleLayout = [&](auto& l, auto n, bool first = false) {
 		const auto i = std::distance(layouts, &l);
 		StringFormat& sf{
 			n <= 2 ? rxm->sf_center :
@@ -1552,16 +1550,16 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		switch (n) {
 		case 1:
 			// "zoomed": 1 sensor, value on top, unit on bottom
-			l.Render(rxm, g, f, zones[4], sf), ++rendered;
+			l.Render(rxm, g, f, zones[4], sf);
 			l.Render(rxm, g, f, zones[5], sf, true);
 			break;
 		case 2:
 			// "large": 2 sensors, 1 on top, 1 on bottom
-			l.Render(rxm, g, f, zones[rendered ? 5 : 4], sf), ++rendered;
+			l.Render(rxm, g, f, zones[first ? 4 : 5], sf);
 			break;
 		default:
 			// "2-column": up to 4 sensors on left, up to 4 sensors on right
-			l.Render(rxm, g, f, zones[i & 3], sf), ++rendered;
+			l.Render(rxm, g, f, zones[i & 3], sf);
 			break;
 		}
 	};
@@ -1572,9 +1570,9 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 			doSingleLayout(l, 1);
 	} else
 		// FOREACH [in-use] Layout on current page...
-		for (auto&& l : layouts)
+		for (auto first = true; auto&& l : layouts)
 			if (l.Active())
-				doSingleLayout(l, n);
+				doSingleLayout(l, n, first), first = false;
 
 	DockletSetImageOverlay(rxm->hwndDocklet, rxm->pg_bm[rxm->page].get(), FALSE);
 }
