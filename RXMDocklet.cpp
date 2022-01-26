@@ -1,7 +1,7 @@
 /*
 	RXMDocklet.cpp - "X" Monitor Docklet [DLL] implementation(s)
 
-	Copyright(c) 2009-2021, Robert Roessler
+	Copyright(c) 2009-2022, Robert Roessler
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -351,7 +351,7 @@ enum class Unit {
 	// "extended" units from "comprehensive" providers
 	MB, MBs, YorN, GTs, T, X, KBs,
 	// even MORE "extended" units
-	FPS, MS, GB,
+	FPS, MS, GB, DB,
 	Unknown
 };
 
@@ -392,6 +392,7 @@ public:
 	virtual constexpr string SensorUnitString(string_view path, bool fahrenheit = false) const = 0;
 	virtual constexpr float SensorValue(string_view path, bool fahrenheit = false) const = 0;
 	virtual constexpr string SensorValueString(string_view path, bool fahrenheit = false) const = 0;
+	virtual constexpr string FormatSensorValue(string_view path, float value) const = 0;
 };
 
 /*
@@ -461,7 +462,7 @@ public:
 			"None",
 			"V", (const char*)u8"°", "rpm", "A", "W", "MHz", "%",
 			"MB", "MB/s", "", "GT/s", "T", "x", "KB/s",
-			"F/s", "ms", "GB",
+			"F/s", "ms", "GB", "dB",
 			"???"
 		};
 		string s{ unitString[as_int(u)] };
@@ -469,9 +470,15 @@ public:
 			s.push_back(fahrenheit ? 'F' : 'C');
 		return s;
 	}
-	string SensorValueString(string_view path, bool fahrenheit) const override {
+	constexpr string SensorValueString(string_view path, bool fahrenheit) const override {
+		return FormatSensorValue(path, SensorValue(path, fahrenheit));
+	}
+	// N.B. - expects to receive an ALREADY Fahrenheit-adjusted value
+	constexpr string FormatSensorValue(string_view path, float value) const override {
 		const auto&& u = SensorUnit(path);
-		const auto&& v = SensorValue(path, fahrenheit);
+		// check for early out on non-numeric
+		if (u == YorN)
+			return value != 0 ? "Yes" : "No";
 		/*
 			# of fractional digits to display for above "universal" units
 
@@ -482,7 +489,7 @@ public:
 			"\000"
 			"\003\000\000\003\003\001\001"
 			"\000\003\000\001\000\000\003"
-			"\000\000\000"
+			"\000\000\000\000"
 			"\000"
 			[as_int(u)]};
 		/*
@@ -491,16 +498,16 @@ public:
 		*/
 		if (w == 1) {
 			// try dropping decimal on simple width check...
-			if (v >= 1000 ||
+			if (value >= 1000 ||
 				// ... or try "Fan" heuristic (aka "hack")
 				(u == UsagePerCent && path.find("Fan") != string::npos))
 				w = 0;
 		} else if (w == 3)
-			if (v >= 100)
+			if (value >= 100)
 				w = 1;
-			else if (v >= 10)
+			else if (value >= 10)
 				w = 2;
-		return std::format("{:.{}f}", v, w);
+		return std::format("{:.{}f}", value, w);
 	}
 };
 
@@ -794,12 +801,6 @@ public:
 		const auto& h = hwi();
 		return h.dwNumSensorElements != origSensors || h.dwNumReadingElements != origReadings;
 	}
-	string SensorValueString(string_view path, bool fahrenheit = false) const override {
-		if (SensorUnit(path) == YorN)
-			return SensorValue(path, fahrenheit) != 0 ? "Yes" : "No";
-		else
-			return MonitorCommonImpl::SensorValueString(path, fahrenheit);
-	}
 };
 
 auto HWiMonitor::unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const
@@ -827,7 +828,7 @@ auto HWiMonitor::unitFromReading(const HWiNFO_SENSORS_READING_ELEMENT& r) const
 		static const map<string, Unit> extendedTypes{
 			{"%", UsagePerCent},
 			{"MB", MB}, {"MB/s", MBs}, {"Yes/No", YorN}, {"GT/s", GTs},
-			{"T", T}, {"x", X}, {"KB/s", KBs}, {"GB", GB}
+			{"T", T}, {"x", X}, {"KB/s", KBs}, {"GB", GB}, {"dB", DB}
 		};
 		const auto&& u = extendedTypes.find(r.szUnit);
 		return u != cend(extendedTypes) ? u->second : Unknown; // we did our best
@@ -1238,6 +1239,7 @@ struct RXM {
 	int focusedSensor{};				// alt-click focused sensor #
 	int focusedTicksRemaining{};		// track alt-click focus mode
 	string_monitor_map_t monitor;		// RXM Monitor-specific impls
+
 										// Gdiplus cached render env
 	unique_ptr<Bitmap> bg_bm, pg_bm[as_int(Pages)];
 	unique_ptr<Graphics> bg_g, pg_g[as_int(Pages)];
@@ -1248,6 +1250,7 @@ struct RXM {
 	Gdiplus::Font f_large{ L"Arial", 30e0F };
 	map<ARGB, unique_ptr<SolidBrush>> brush;
 	map<ARGB, unique_ptr<Pen>> pen;
+
 	struct Layout {
 		string path;					// our sensor
 		COLORREF rgb{ 0 };				// this color
@@ -1269,16 +1272,16 @@ struct RXM {
 					auto m = rxm->FromPath(path);
 					if (m->RefreshNeeded())
 						m->Refresh();
-					last = m->SensorValue(path);
+					last = m->SensorValue(path, rxm->fahrenheit == 1);
 					t = std::move(utf16StringFromUTF8((unitString ?
 						m->SensorUnitString(path,  rxm->fahrenheit == 1):
-						m->SensorValueString(path, rxm->fahrenheit == 1)).c_str()));
+						m->FormatSensorValue(path, last)).c_str()));
 				} else
 					trace("Sensor ", path, " is UNDEAD!");
 				g.DrawString(t.c_str(), -1, &f, r, &sf, rxm->CachedBrush(rgb));
 			}
 		}
-		auto UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path) != last; }
+		auto UpdateRequired(RXM* rxm) const { return Active() && Live(rxm) && rxm->FromPath(path)->SensorValue(path, rxm->fahrenheit == 1) != last; }
 	} layout[as_int(Pages)][as_int(LayoutsPerPage)]; // sensor layouts (all pages)
 };
 
@@ -1504,8 +1507,7 @@ static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* 
 		{ 0, 0, 128, 64 }, { 0, 64, 128, 64 }
 	};
 	auto& g{ *rxm->pg_g[rxm->page] };
-	static const Color zeroed{ 0, 0, 0, 0 };
-	g.Clear(zeroed);
+	g.Clear(Color{ 0, 0, 0, 0 });
 	g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
 
 	// build rendering environment, part II...

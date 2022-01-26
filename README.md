@@ -8,6 +8,7 @@ late 90s through about 2004.
 
 After this, RXMDocklet was created by abstracting the internal models and data
 structures used so that potentially *any* hardware "monitor" type app (or apps)
+[that makes its readings available in a shared memory area]
 could be used as sources of data to display in the ObjectDock docklet.
 
 RXMDocklet is quite simple in its primary interface, displaying from 1 to 8
