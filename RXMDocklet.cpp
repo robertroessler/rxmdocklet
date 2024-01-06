@@ -113,34 +113,20 @@ constexpr auto polling_period = 1000;
 // (change the following line to true for tracing with ::OutputDebugStringA())
 constexpr auto trace_enabled = false;
 
-/*
-	Construct trace message prefix including current "state machine" indicators.
-*/
-static auto tracePre(char* b, size_t n)
-{
-	if constexpr (trace_enabled) {
-		const auto r = std::format_to_n(b, n, "RxTRACE> ");
-		return string_view(b, r.size);
-	}
-}
-
 template<typename... ARGS>
 static void trace(const ARGS&... args)
 {
 	if constexpr (trace_enabled) {
-		string_view fmt{ "{}{}{}{}{}{}{}{}", (min(sizeof...(ARGS), 7) + 1) * 2 };
-		char b[32];
-		::OutputDebugStringA(std::format(fmt, tracePre(b, std::size(b)), args...).c_str());
+		string_view fmt{ "RxTRACE> {}{}{}{}{}{}", min(sizeof...(ARGS), 6) * 2 + 9 };
+		::OutputDebugStringA(std::vformat(fmt, std::make_format_args(args...)).c_str());
 	}
 }
 
 template<typename... ARGS>
 static void trace_ex(string_view fmt, const ARGS&... args)
 {
-	if constexpr (trace_enabled) {
-		char b[32];
-		::OutputDebugStringA(std::format("{}"s.append(fmt), tracePre(b, std::size(b)), args...).c_str());
-	}
+	if constexpr (trace_enabled)
+		::OutputDebugStringA(std::vformat("RxTRACE> "s.append(fmt), std::make_format_args(args...)).c_str());
 }
 
 /*
@@ -507,7 +493,7 @@ public:
 				w = 1;
 			else if (value >= 10)
 				w = 2;
-		return std::format("{:.{}f}", value, w);
+		return std::format("{:.{}f}", value, (int)w);
 	}
 };
 
@@ -1182,21 +1168,22 @@ using namespace rxm;
 	as well as requires clause to guarantee the key_type on said container.
 */
 
-template<typename T>
+template<class T>
 concept map_type =
-std::same_as<T, std::map<typename T::key_type, typename T::mapped_type, typename T::key_compare, typename T::allocator_type>> ||
-std::same_as<T, std::unordered_map<typename T::key_type, typename T::mapped_type, typename T::hasher, typename T::key_equal, typename T::allocator_type>>;
+std::same_as<T, std::map<typename T::key_type, typename T::mapped_type>> ||
+std::same_as<T, std::unordered_map<typename T::key_type, typename T::mapped_type>>;
 
 template<map_type T>
 requires std::same_as<typename T::key_type, ARGB>
 const auto gdip_caching_impl(T& gdip_container, Color c)
 {
+	using pointer_element_t = T::mapped_type::element_type;
 	const auto argb = c.GetValue();
 	const auto&& i = gdip_container.find(argb);
 	return i != cend(gdip_container) ?
 		i->second.get() :
 		gdip_container.emplace(
-			argb, make_unique<T::mapped_type::element_type>(c)).first->second.get();
+			argb, make_unique<pointer_element_t>(c)).first->second.get();
 }
 
 static inline auto COLORREF2Color(COLORREF cr)
@@ -1248,8 +1235,8 @@ struct RXM {
 	StringFormat sf_far{ StringFormatFlagsNoWrap | StringFormatFlagsNoClip, LANG_NEUTRAL };
 	Gdiplus::Font f_small{ L"Arial", 15e0F };
 	Gdiplus::Font f_large{ L"Arial", 30e0F };
-	map<ARGB, unique_ptr<SolidBrush>> brush;
-	map<ARGB, unique_ptr<Pen>> pen;
+	std::unordered_map<ARGB, unique_ptr<SolidBrush>> brush;
+	std::unordered_map<ARGB, unique_ptr<Pen>> pen;
 
 	struct Layout {
 		string path;					// our sensor
@@ -1489,10 +1476,7 @@ static void renderBackground(RXM* rxm)
 static void renderPage(RXM* rxm, RenderType render = RenderType::Normal, POINT* pt = nullptr, SIZE* sz = nullptr)
 {
 	// display all sensors on current page AS REQUIRED
-	if (render != RenderType::StartFocus &&
-		render != RenderType::EndFocus &&
-		render != RenderType::Forced &&
-		!rxm->Focused() &&
+	if (render == RenderType::Normal && !rxm->Focused() &&
 		std::none_of(cbegin(rxm->layout[rxm->page]), cend(rxm->layout[rxm->page]), [rxm](auto& l) {
 			return l.UpdateRequired(rxm); }))
 		return; // (nothing to do)
