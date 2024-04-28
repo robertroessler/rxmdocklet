@@ -1233,7 +1233,7 @@ static inline auto COLORREF2Color(COLORREF cr)
 	human-readable names of monitoring apps with the "IMonitor" interfaces that
 	abstract their capabilities that RXMDocklet uses, and the array of "Layout"
 	objects that control the display of individual values - arranged in 4 pages
-	of 8 values, with 2 columns of 4 on each page (in general).
+	of 8 values, with 2 columns of 4 rows on each page (in general).
 
 	There are actually 3 "cases" of sensor display:
 	* - 1 sensor (also called "zoomed"): if either there is only a single sensor
@@ -1245,7 +1245,7 @@ static inline auto COLORREF2Color(COLORREF cr)
 	*values* in the over/under format
 
 	* - 3 or more sensors: this makes use of a smaller font, and lays out a grid
-	that has 2 columns of 4 rows
+	that has [the default] 2 columns of 4 rows
 */
 class RXM {
 	using enum LayoutConf;
@@ -1552,8 +1552,7 @@ public:
 					t = std::move(utf16StringFromUTF8((unitString ?
 						m->SensorUnitString(path, rxm->fahrenheit == 1) :
 						m->FormatSensorValue(path, last)).c_str()));
-				}
-				else
+				} else
 					trace("Sensor ", path, " is UNDEAD!");
 				g.DrawString(t.c_str(), -1, &f, r, &sf, rxm->CachedBrush(rgb));
 			}
@@ -1589,7 +1588,7 @@ class RXMConfigure : public CDialogEx
 
 	void assignSensor(int sensor);
 	void assignColor(int sensor);
-	void initializeBackgroundList();
+	void initializeBackgroundList() const;
 	void initializeSensors();
 	void initializeSensorTree();
 	void locateSensor(int sensor);
@@ -1735,21 +1734,22 @@ void CALLBACK OnGetInformation(char *szName, char *szAuthor, int *iVersion, char
 
 BOOL CALLBACK OnLeftButtonClick(RXM* rxm, POINT *pt, SIZE *sz)
 {
-	// check status of ALT (aka MENU) modifier key...
-	if (!rxm->Focused() && ::GetAsyncKeyState(VK_MENU) < 0)
-		// switch into "zoomed"/"focused" mode for 5 seconds
-		rxm->RenderPage(RenderType::StartFocus, pt, sz);
-	else {
-		// show "next" page of sensors (N.B. - "Pages" must be a power of 2)
-		// (click moves "forward" in set of pages, shift-click moves "back")
-		const auto delta = ::GetAsyncKeyState(VK_SHIFT) < 0 ? -1 : 1;
-		const auto i = rxm->page;
-		do
-			rxm->page = (rxm->page + delta) & (as_int(LayoutConf::Pages) - 1);
-		while (!rxm->AnyActiveOnPage() && rxm->page != i);
-		if (rxm->page != i)
-			rxm->RenderPage(RenderType::Forced);
-	}
+	// IFF not already focused, check status of ALT (aka MENU) modifier key...
+	if (!rxm->Focused())
+		if (::GetAsyncKeyState(VK_MENU) < 0)
+			// switch into "zoomed"/"focused" mode for 5 seconds
+			rxm->RenderPage(RenderType::StartFocus, pt, sz);
+		else {
+			// show "next" page of sensors (N.B. - "Pages" must be a power of 2)
+			// (click moves "forward" in set of pages, shift-click moves "back")
+			const auto delta = ::GetAsyncKeyState(VK_SHIFT) < 0 ? -1 : 1;
+			const auto start = rxm->page;
+			do
+				rxm->page = (rxm->page + delta) & (as_int(LayoutConf::Pages) - 1);
+			while (!rxm->AnyActiveOnPage() && rxm->page != start);
+			if (rxm->page != start)
+				rxm->RenderPage(RenderType::Forced);
+		}
 	return TRUE;
 }
 
@@ -1793,11 +1793,10 @@ BOOL CALLBACK OnRightButtonClick(RXM* rxm, POINT *ptCursor, SIZE *sizeDocklet)
 	switch (i) {
 	case 1: {
 		// configure docklet
-		RXMConfigure cfg(rxm);
 		const auto oldPage = rxm->page, oldFahrenheit = rxm->fahrenheit, oldImage = rxm->image;
 		decltype(rxm->layout) oldLayout;
 		std::copy(decayed_begin(rxm->layout), decayed_end(rxm->layout), decayed_begin(oldLayout));
-		if (cfg.DoModal() != IDOK) {
+		if (auto cfg = make_unique<RXMConfigure>(rxm); cfg->DoModal() != IDOK) {
 			// user changed their mind, put it all back... AS REQUIRED
 			std::copy(decayed_begin(oldLayout), decayed_end(oldLayout), decayed_begin(rxm->layout));
 			// ... and try to save a little [resource allocation] work
@@ -1892,7 +1891,7 @@ void RXMConfigure::assignSensor(int sensor)
 	rxm->RenderPage(RenderType::Forced);
 }
 
-void RXMConfigure::initializeBackgroundList()
+void RXMConfigure::initializeBackgroundList() const
 {
 	static const constinit char* b[as_int(LayoutConf::BackgroundImages)]{
 		"Black",

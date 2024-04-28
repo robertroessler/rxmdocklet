@@ -26,18 +26,27 @@ enum SENSOR_READING_TYPE {
 // No alignment of structure members
 #pragma pack(1)
 
+// STRING ENCODING ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// All "char" arrays contain ANSI strings encoded depending on current locale set in Windows Region Settings or Current language for Non-Unicode programs.
+// Version 2 (dwVersion>=2) adds new strings encoded in UTF-8 format (e.g. utfLabelUser). Using this string instead of ANSI is recommended
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 typedef struct _HWiNFO_SENSORS_READING_ELEMENT {
 
   SENSOR_READING_TYPE tReading;                 // Type of sensor reading
   DWORD dwSensorIndex;                          // This is the index of sensor in the Sensors[] array to which this reading belongs to
   DWORD dwReadingID;                            // A unique ID of the reading within a particular sensor
-  char szLabelOrig[HWiNFO_SENSORS_STRING_LEN2]; // Original label (e.g. "Chassis2 Fan")
-  char szLabelUser[HWiNFO_SENSORS_STRING_LEN2]; // Label displayed, which might have been renamed by user
-  char szUnit[HWiNFO_UNIT_STRING_LEN];          // e.g. "RPM"
+  char szLabelOrig[HWiNFO_SENSORS_STRING_LEN2]; // Original label (e.g. "Chassis2 Fan") in English language [ANSI string]
+  char szLabelUser[HWiNFO_SENSORS_STRING_LEN2]; // Label displayed, which might have been renamed by user [ANSI string]
+  char szUnit[HWiNFO_UNIT_STRING_LEN];          // e.g. "RPM" [ANSI string]
   double Value;
   double ValueMin;
   double ValueMax;
   double ValueAvg;
+
+  // Version 2+ new:
+  BYTE utfLabelUser[HWiNFO_SENSORS_STRING_LEN2]; // Label displayed, which might be translated or renamed by user [UTF-8 string]
+  BYTE utfUnit[HWiNFO_UNIT_STRING_LEN];          // e.g. "RPM" [UTF-8 string]
 
 } HWiNFO_SENSORS_READING_ELEMENT, *PHWiNFO_SENSORS_READING_ELEMENT;
 
@@ -45,15 +54,18 @@ typedef struct _HWiNFO_SENSORS_SENSOR_ELEMENT {
 
   DWORD dwSensorID;                                  // A unique Sensor ID
   DWORD dwSensorInst;                                // The instance of the sensor (together with dwSensorID forms a unique ID)
-  char szSensorNameOrig[HWiNFO_SENSORS_STRING_LEN2]; // Original sensor name
-  char szSensorNameUser[HWiNFO_SENSORS_STRING_LEN2]; // Sensor name displayed, which might have been renamed by user
-  
+  char szSensorNameOrig[HWiNFO_SENSORS_STRING_LEN2]; // Original sensor name in English language [ANSI string]
+  char szSensorNameUser[HWiNFO_SENSORS_STRING_LEN2]; // Sensor name displayed, which might have been renamed by user [ANSI string]
+
+  // Version 2+ new:
+  BYTE utfSensorNameUser[HWiNFO_SENSORS_STRING_LEN2]; // Sensor name displayed, which might be translated or renamed by user [UTF-8 string]
+
 } HWiNFO_SENSORS_SENSOR_ELEMENT, *PHWiNFO_SENSORS_SENSOR_ELEMENT;
 
 typedef struct _HWiNFO_SENSORS_SHARED_MEM2 {
 
   DWORD dwSignature;             // "HWiS" if active, 'DEAD' when inactive
-  DWORD dwVersion;               // v1 current
+  DWORD dwVersion;               // Structure layout version. 1=Initial; 2=Added UTF-8 strings (HWiNFO v7.33+)
   DWORD dwRevision;              // 0: Initial layout (HWiNFO ver <= 6.11)
                                  // 1: Added (HWiNFO v6.11-3917)
   __time64_t poll_time;          // last polling time
