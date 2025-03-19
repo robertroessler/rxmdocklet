@@ -1,7 +1,7 @@
 /*
 	RXMDocklet.cpp - "X" Monitor Docklet [DLL] implementation(s)
 
-	Copyright(c) 2009-2024, Robert Roessler
+	Copyright(c) 2009-2025, Robert Roessler
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -374,13 +374,13 @@ enum class Unit {
 	utility functions for accessing [sensor] path components
 */
 
-constexpr string_view head(string_view path)
+static constexpr string_view head(string_view path)
 {
 	const auto i = path.find_first_of('|');
 	return i != string::npos ? path.substr(0, i) : "";
 }
 
-constexpr string_view tail(string_view path)
+static constexpr string_view tail(string_view path)
 {
 	const auto i = path.find_last_of('|');
 	return i != string::npos ? path.substr(i + 1) : "";
@@ -457,7 +457,7 @@ public:
 		if (v == cend(values) || u == cend(units))
 			ret = std::numeric_limits<float>::infinity();	// sensor not present
 		else try {
-			auto c2f = [](auto f) { return floor((f * 9 / 5 + 32) + 0.5); };
+			auto c2f = [](auto f) noexcept { return floor((f * 9 / 5 + 32) + 0.5); };
 			ret = (u->second == Degrees && fahrenheit) ? (float)c2f(v->second()) : v->second();
 		} catch (...) {
 			ret = std::numeric_limits<float>::infinity();	// sensor not present
@@ -953,7 +953,7 @@ public:
 
 auto HWMonitor::unitFromDGS(int d, int g, int s) const {
 	using enum Unit;
-	static constexpr Unit g2u[]{ Volts, Degrees, RPM, RPM, Amps, Watts };
+	static constexpr Unit g2u[]{ Volts, Degrees, RPM, RPM, Amps, Watts, Unknown, Unknown, Unknown, Unknown };
 	return mapping.Base() && d < deviceCount() && g < MaxGroups && s < sensorCount(d, g) ? g2u[g] : None;
 }
 
@@ -1415,7 +1415,7 @@ public:
 		using enum RenderType;
 		// build rendering environment, part I...
 		auto& layouts = layout[page];
-		auto as_index = [&layouts](auto& l) { return std::distance(layouts, &l); };
+		auto as_index = [&layouts](auto& l) noexcept { return std::distance(layouts, &l); };
 		static const RectF zones[]{
 			{ 0, 0, 128, 32 }, { 0, 32, 128, 32 }, { 0, 64, 128, 32 }, { 0, 96, 128, 32 },
 			{ 0, 0, 128, 64 }, { 0, 64, 128, 64 }
